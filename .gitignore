@@ -1,0 +1,8 @@
+config.php
+*.log
+*.csv
+*.json
+c:\jetinno_runtime\
+/jetinno_runtime/
+/export/
+/runtime/

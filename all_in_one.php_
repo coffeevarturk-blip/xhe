@@ -1,0 +1,395 @@
+<?php
+
+// init
+require("../Templates/init.php");
+
+// load config FIRST
+$CFG = require __DIR__ . DIRECTORY_SEPARATOR . 'config.php';
+
+$xhe_host = $CFG['xhe']['host'];
+
+$bUTF8Ver = true;
+$PHP_Use_Trought_Shell = true;
+
+$browser->set_user_agent(
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ".
+    "AppleWebKit/537.36 (KHTML, like Gecko) ".
+    "Chrome/120.0.0.0 Safari/537.36"
+);
+
+date_default_timezone_set($CFG['timezone'] ?? 'Europe/Istanbul');
+
+// -------------------- CONFIG --------------------
+$loginValue   = $CFG['auth']['login'];
+$passValue    = $CFG['auth']['password'];
+$maxAttempts  = (int)($CFG['auth']['max_attempts'] ?? 10);
+
+$anticapcha->api_key = $CFG['anticaptcha']['api_key'];
+$captchaPath = $CFG['anticaptcha']['captcha_path'];
+
+// Jetinno accounts
+$accounts = $CFG['jetinno']['accounts'] ?? [];
+
+// Нормализуем схему accounts:
+// - если передали один аккаунт как ассоц. массив (с ключом user_id) — оборачиваем в список
+// - если accounts задан как словарь с ключами (name => [...]) — оставляем как есть, foreach тоже отработает
+if (is_array($accounts) && isset($accounts['user_id'])) {
+    $accounts = [ $accounts ];
+}
+
+// fallback на старую схему (один user_id)
+if (!is_array($accounts) || count($accounts) === 0) {
+    $accounts = [[
+        'name' => 'DEFAULT',
+        'user_id' => (int)($CFG['jetinno']['user_id'] ?? 0),
+        'telegram_chat_id' => ($CFG['telegram']['chat_id'] ?? null),
+    ]];
+}
+
+function buildUrls(int $userId): array {
+    return [
+        'SupplyList'  => "https://saas-hk.jetinno.com/supply?user_id={$userId}&date_range=&vmc_no=&vmc_model=&export=0",
+        'BoilerError' => "https://saas-hk.jetinno.com/error?user_id={$userId}&data_type=0&daterange=&vmc_no=&like=ERROR%3A7300&vmc_model=&error_code=&is_set=1&perPage=25&order_by%5Bkey%5D=&order_by%5Bvalue%5D=&export=0",
+        'BardakError' => "https://saas-hk.jetinno.com/error?user_id={$userId}&data_type=0&daterange=&vmc_no=&like=ERROR%3A5406&vmc_model=&error_code=&is_set=1&perPage=25&order_by%5Bkey%5D=&order_by%5Bvalue%5D=&export=0",
+        'Supply'      => "https://saas-hk.jetinno.com/device?user_id={$userId}&is_connected=1&is_error=&is_warning=&is_supply=1&scene=&vmcs=&vmc_no=&location=&vmc_model=&app_version=&io_version=&stum_version=&cup_version=&ice_version=&milk_version=&syrup_version=&custom_id=&remark1=&page_mode=0&page=&perPage=10&order_by%5Bkey%5D=&order_by%5Bvalue%5D=&export=0",
+        'Index'       => "https://saas-hk.jetinno.com/index",
+        'DeviceError' => "https://saas-hk.jetinno.com/device?user_id={$userId}&is_connected=1&is_error=1&is_warning=&is_supply=&scene=&vmcs=&vmc_no=&location=&vmc_model=&app_version=&io_version=&stum_version=&cup_version=&ice_version=&milk_version=&syrup_version=&custom_id=&remark1=&page_mode=0&page=&perPage=10&order_by%5Bkey%5D=&order_by%5Bvalue%5D=&export=0",
+        'Warning'     => "https://saas-hk.jetinno.com/device?user_id={$userId}&is_connected=1&is_error=0&is_warning=1&is_supply=&scene=&vmcs=&vmc_no=&location=&vmc_model=&app_version=&io_version=&stum_version=&cup_version=&ice_version=&milk_version=&syrup_version=&custom_id=&remark1=&page_mode=0&page=&perPage=10&order_by%5Bkey%5D=&order_by%5Bvalue%5D=&export=0",
+        'Orders'      => "https://saas-hk.jetinno.com/order?user_id={$userId}",
+    ];
+}
+
+
+// XHE element numbers
+$boilerAnchorNumber = 2983;
+$confirmSpanNumber  = 344;
+$machineInputNumber = 40;
+$rebootBtnNumber    = 55;
+$salesSpanNumber    = 140;
+
+// -------------------- INCLUDES --------------------
+require_once __DIR__ . DIRECTORY_SEPARATOR . "functions.php";
+require_once __DIR__ . DIRECTORY_SEPARATOR . "supply_parsing.php";
+require_once __DIR__ . DIRECTORY_SEPARATOR . "supply_notify.php";
+require_once __DIR__ . DIRECTORY_SEPARATOR . "last-order.php";
+
+// -------------------- LOCATIONS --------------------
+$locations = [
+    81935 => ['location' => 'Кестель СТО'],
+    81941 => ['location' => 'Depo'],
+    81939 => ['location' => 'Yekta Trade Migros'],
+    81943 => ['location' => 'Кестель Кафе'],
+    81956 => ['location' => 'Kestel Burak Market'],
+    81957 => ['location' => 'Metro Main'],
+    81947 => ['location' => 'Metro Office'],
+    81958 => ['location' => 'Yekta Trade Tiffany'],
+];
+
+// -------------------- STATE --------------------
+$defaultState = [
+    'machine' => [],
+    'reboot'  => [],
+    'supplies_alert' => [],
+    'sales' => [],
+    'admin_notify' => [],
+];
+
+$stateFile = function_exists('state_path') ? state_path('main') : ($CFG['paths']['state_files']['main'] ?? ($CFG['paths']['state_file'] ?? 'c:\jetinno_state.json'));
+$notifyStateFile = function_exists('state_path') ? state_path('notify') : ($CFG['paths']['state_files']['notify'] ?? 'c:\jetinno_notify_state.json');
+// --- RESOLVED PATHS (для диагностики) ---
+if (function_exists('log_info')) {
+    log_info('state', 'main=' . $stateFile);
+    log_info('state', 'notify=' . $notifyStateFile);
+    if (function_exists('log_dir')) log_info('log', 'dir=' . log_dir());
+}
+
+$ordersStoreFile = $CFG['paths']['orders_store'];
+$debugOrdersFile = $CFG['paths']['debug_orders'];
+
+$state = state_load($stateFile, $defaultState);
+
+// notify-state (антиспам Telegram) отдельно от основного state
+$notifyState = state_load($notifyStateFile, [
+    'tg_notify' => [],
+    'admin_notify' => [],
+]);
+
+// -------------------- FUNCTIONS --------------------
+function loginIfNeeded(
+    $input,
+    $btn,
+    $browser,
+    $image,
+    $anticapcha,
+    string $loginValue,
+    string $passValue,
+    string $captchaPath,
+    int $maxAttempts,
+    array &$state
+): void {
+    $attempt = 0;
+
+    while ($input->is_exist_by_attribute("id", "username", false) && $attempt < $maxAttempts) {
+        $attempt++;
+        xhe_log('login', "login try {$attempt}");
+
+        $input->set_value_by_attribute("id", "username", false, $loginValue);
+        $input->set_value_by_attribute("id", "password", false, $passValue);
+
+        $image->screenshot_by_number($captchaPath, 0);
+
+        echo $captchaText = $anticapcha->recognize(
+            $captchaPath,
+            $anticapcha->api_key,
+            "https://anti-captcha.com/",
+            true,
+            5,
+            120,
+            0,
+            1,
+            0
+        );
+
+        $input->set_value_by_attribute_by_form_number("id", "code", false, $captchaText, -1);
+
+        $btn->click_by_attribute("id", "login", false);
+        $browser->wait(3);
+        sleep(1);
+    }
+    // Если после maxAttempts всё ещё на странице логина — сообщаем админу (с rate-limit)
+    if ($input->is_exist_by_attribute("id", "username", false) && $attempt >= $maxAttempts) {
+        notifyAdmin(
+            "Превышено число попыток авторизации (" . $attempt . ")\nLogin: " . $loginValue,
+            'auth_max_attempts',
+            $state
+        );
+    }
+}
+
+function handleBoilerErrorAndReboot(
+    $browser,
+    $anchor,
+    $image,
+    $span,
+    $input,
+    $btn,
+    array $locations,
+    string $urlBoilerError,
+    int $boilerAnchorNumber,
+    int $confirmSpanNumber,
+    int $machineInputNumber,
+    int $rebootBtnNumber,
+    array &$state,
+    array &$notifyState,
+    int &$i,
+    string $accountKey = 'default',
+    $chatId = null,
+    bool $tgEnabled = true
+): bool {
+    if (!$tgEnabled) {
+        return false;
+    }
+    $browser->close_all_tabs();
+    $browser->navigate($urlBoilerError);
+    $browser->wait(5);
+
+    if (!$anchor->is_exist_by_number($boilerAnchorNumber)) {
+        xhe_log('reboot', "no boiler error");
+        $i = ($i + 1) % 30;
+        return false;
+    }
+
+    $machine_href = $anchor->get_href_by_number($boilerAnchorNumber);
+    if (!is_string($machine_href) || !str_contains($machine_href, "vmc_no=")) {
+        xhe_log('reboot', "no boiler error (invalid href)");
+        $i = ($i + 1) % 30;
+        return false;
+    }
+
+    $machine_url = $machine_href;
+    $machine_number = extractMachineNumberFromHref($machine_href);
+
+    $date = date("Y-m-d H:i:s");
+    $location = getLocation($locations, $machine_number) ?? 'Unknown';
+    xhe_log('reboot', "boiler error - {$machine_number} - {$location}");
+    $i = 0;
+
+    if (!isset($state['reboot']) || !is_array($state['reboot'])) { $state['reboot'] = []; }
+    if (!isset($state['reboot'][$accountKey]) || !is_array($state['reboot'][$accountKey])) { $state['reboot'][$accountKey] = []; }
+    $lastReboot = (int)($state['reboot'][$accountKey][$machine_number] ?? 0);
+    if ($lastReboot > 0 && (time() - $lastReboot) <= 300) {
+        xhe_log('reboot', "skip reboot (cooldown)");
+        return true;
+    }
+
+    $browser->navigate($machine_url);
+    $browser->wait(5);
+
+    $image->click_by_src("https://saas-hk.jetinno.com/home/images/control.png", false);
+    $browser->wait(5);
+
+    $image->click_by_src("https://saas-hk.jetinno.com/home/images/reboot.png", false);
+    $browser->wait(5);
+
+    $span->click_by_number($confirmSpanNumber);
+    $browser->wait(5);
+
+    $anchor->click_by_inner_html("<span class=\"text\">makine</sp", false);
+    $browser->wait(5);
+
+    $input->click_by_number($machineInputNumber);
+    $input->set_value_by_number($machineInputNumber, $machine_number);
+    $browser->wait(1);
+
+    $btn->set_focus_by_number($rebootBtnNumber);
+    $btn->click_by_number($rebootBtnNumber);
+    $browser->wait(3);
+
+    $state['reboot'][$accountKey][$machine_number] = time();
+
+    tg_notify('reboot', $date . " " . $machine_number . " - " . $location . " - boiler error - reboot", $chatId, $accountKey.'|'.$machine_number, $notifyState);
+return true;
+}
+
+// -------------------- MAIN LOOP --------------------
+$i = 0;
+
+do {
+    $browser->close_all_tabs();
+    $browser->navigate("https://saas-hk.jetinno.com");
+    $browser->wait(5);
+
+    // логин общий (сессия)
+    loginIfNeeded($input, $btn, $browser, $image, $anticapcha, $loginValue, $passValue, $captchaPath, $maxAttempts, $notifyState);
+
+    // отдельный проход по каждому user_id
+    foreach ($accounts as $acc) { try {
+        $userId = (int)($acc['user_id'] ?? 0);
+        if ($userId <= 0) continue;
+
+        $accountKey = (string)($acc['name'] ?? ("user_" . $userId));
+        $chatId = $acc['telegram_chat_id'] ?? ($CFG['telegram']['chat_id'] ?? null);
+
+        // per-account telegram notify switches (config.php вы настраиваете сами)
+        $tgErrorsEnabled = isTelegramNotifyEnabled($acc, 'errors');
+        $tgSupplyEnabled = isTelegramNotifyEnabled($acc, 'supply');
+        $tgSalesEnabled  = isTelegramNotifyEnabled($acc, 'sales');
+        $tgOrdersEnabled = isTelegramNotifyEnabled($acc, 'orders');
+        $tgRebootEnabled = isTelegramNotifyEnabled($acc, 'reboot');
+
+        // локации можно переопределить на аккаунт
+        $accLocations = $acc['locations'] ?? $locations;
+
+        $urls = buildUrls($userId);
+
+        // свой счётчик для ребута (в памяти)
+        if (!isset($GLOBALS['__iCounters'])) $GLOBALS['__iCounters'] = [];
+        if (!isset($GLOBALS['__iCounters'][$accountKey])) $GLOBALS['__iCounters'][$accountKey] = 0;
+        $iRef = &$GLOBALS['__iCounters'][$accountKey];
+
+        handleBoilerErrorAndReboot(
+            $browser, $anchor, $image, $span, $input, $btn,
+            $accLocations,
+            $urls['BoilerError'],
+            $boilerAnchorNumber,
+            $confirmSpanNumber,
+            $machineInputNumber,
+            $rebootBtnNumber,
+            $state,
+            $notifyState,
+            $iRef,
+            $accountKey,
+            $chatId,
+            $tgRebootEnabled
+        );
+
+        // bardak
+        $browser->close_all_tabs();
+        $browser->navigate($urls['BardakError']);
+        $browser->wait(3);
+
+        processMachine($anchor, (string)$boilerAnchorNumber, "bardak_error", $accLocations, $state, "machine", "bardak_error", 300, 0, 'Europe/Istanbul', false, $accountKey, $chatId, $tgErrorsEnabled);
+
+        // supply flag
+        $browser->close_all_tabs();
+        $browser->navigate($urls['Supply']);
+        $browser->wait(3);
+        processMachine($anchor, "155", "supply_error", $accLocations, $state, "machine", "supply_error", 300, 0, 'Europe/Istanbul', false, $accountKey, $chatId, $tgSupplyEnabled);
+
+        // sales
+        $browser->close_all_tabs();
+        $browser->navigate($urls['Index']);
+        $browser->wait(5);
+        sleep(5);
+
+        $new_sales = $span->get_inner_text_by_number($salesSpanNumber);
+        xhe_log('sales', "total sales ({$accountKey}) - " . $new_sales);
+
+        if (!isset($state['sales']) || !is_array($state['sales'])) { $state['sales'] = []; }
+        if (!isset($state['sales'][$accountKey]) || !is_array($state['sales'][$accountKey])) { $state['sales'][$accountKey] = ['old' => 0]; }
+
+        if ((float)$new_sales > (float)($state['sales'][$accountKey]['old'] ?? 0)) {
+            if ($tgSalesEnabled) {
+                tg_notify('sales', date("Y-m-d H:i:s") . " - ({$accountKey}) new sales amount: " . $new_sales . " TL", $chatId, $accountKey, $notifyState);
+            }
+$state['sales'][$accountKey]['old'] = $new_sales;
+        }
+
+        // unknown errors
+        $browser->close_all_tabs();
+        $browser->navigate($urls['DeviceError']);
+        $browser->wait(3);
+        processMachine($anchor, "150", "unknown_error", $accLocations, $state, "machine", "unknown_error", 300, 0, 'Europe/Istanbul', false, $accountKey, $chatId, $tgErrorsEnabled);
+
+        // warnings (after 09:00)
+        $browser->close_all_tabs();
+        $browser->navigate($urls['Warning']);
+        $browser->wait(3);
+        processMachine($anchor, "151", "warning", $accLocations, $state, "machine", "warning", 900, 9, 'Europe/Istanbul', false, $accountKey, $chatId, $tgErrorsEnabled);
+
+        // SUPPLY LIST
+        $browser->close_all_tabs();
+        $browser->navigate($urls['SupplyList']);
+        $browser->wait(5);
+        sleep(2);
+
+        $html = $webpage->get_body();
+        if (is_string($html) && $html !== '') {
+            $parsed = parseSupplyListHtml($html);
+            if ($tgSupplyEnabled) {
+                notifyLowSupplies($parsed, $accLocations, $state, 10000, 'supplies_alert', $accountKey, $chatId);
+            }
+        }
+
+        // ORDERS
+        $browser->close_all_tabs();
+        $browser->navigate($urls['Orders']);
+        $browser->wait(8);
+
+        // отдельный файл дедупликации на аккаунт
+        $storeFile = $ordersStoreFile;
+        if (is_string($storeFile) && $storeFile !== '') {
+            $storeFile = preg_replace('/\.txt$/i', '', $storeFile) . "_" . $userId . ".txt";
+        }
+
+        checkNewMdbOrders_TR($webpage, $accLocations, $storeFile, $debugOrdersFile, true, $chatId, $acc, $accountKey, $tgOrdersEnabled);
+        } catch (Throwable $e) {
+            // Не даём одному аккаунту остановить весь цикл
+            if (function_exists('xhe_log')) {
+                xhe_log('system', 'Account loop error: ' . $e->getMessage());
+            } else {
+                echo date('Y-m-d H:i:s') . ' | Account loop error: ' . $e->getMessage() . "<br>";
+            }
+            continue;
+        }
+    }
+
+    // prune + save
+    state_prune($state, 30 * 86400);
+    state_save($stateFile, $notifyState);
+
+    sleep(60);
+
+} while (1);
+
+$app->quit();
