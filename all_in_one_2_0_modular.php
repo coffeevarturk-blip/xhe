@@ -115,6 +115,10 @@ function run_module_file(bool $enabled, string $label, string $filePath): void {
     $accountKey = $GLOBALS['accountKey'] ?? null;
 
     $cookieStr  = $GLOBALS['cookieStr']  ?? null;
+    $stamp     = $GLOBALS['stamp']     ?? null;
+    $outDir    = $GLOBALS['outDir']    ?? null;
+    $chatId    = $GLOBALS['chatId']    ?? null;
+    $locations = $GLOBALS['locations'] ?? null;
     // State arrays are commonly mutated by modules; keep them by-reference if present
     if (array_key_exists('state', $GLOBALS)) {
         $state = &$GLOBALS['state'];
@@ -254,6 +258,11 @@ foreach ($accounts as $acc) {
     $GLOBALS['accName']    = $accName;
     $GLOBALS['accountKey'] = $accountKey;
     $GLOBALS['cookieStr']  = $cookieStr;
+    // runtime/export context for modules
+    if (isset($stamp))     { $GLOBALS['stamp'] = $stamp; }
+    if (isset($outDir))    { $GLOBALS['outDir'] = $outDir; }
+    if (isset($chatId))    { $GLOBALS['chatId'] = $chatId; }
+    if (isset($locations)) { $GLOBALS['locations'] = $locations; }
     // Always load per-account prelude (sets $state, $notifyState, chat ids, etc.)
     require __DIR__ . '/modules/account_prelude.php';
 
@@ -261,6 +270,39 @@ foreach ($accounts as $acc) {
     // account_prelude typically sets $state and $notifyState in the current scope
     if (isset($state))       { $GLOBALS['state'] = &$state; }
     if (isset($notifyState)) { $GLOBALS['notifyState'] = &$notifyState; }
+    // Common per-account runtime vars expected by legacy modules
+    if (!isset($stamp) || $stamp === '' || $stamp === null) {
+        $stamp = date('Ymd_His');
+    }
+    if (!isset($outDir) || $outDir === '' || $outDir === null) {
+        $outDir = (function_exists('runtime_base_dir') ? runtime_base_dir() : 'C:\\jetinno_runtime') . DIRECTORY_SEPARATOR . 'export';
+    }
+    if (!is_dir($outDir)) {
+        @mkdir($outDir, 0777, true);
+    }
+
+    // Chat id for this account (used by modules)
+    if (!isset($chatId) || $chatId === null || $chatId === '') {
+        $chatId = $acc['telegram_chat_id'] ?? ($CFG['telegram']['chat_id'] ?? null);
+    }
+
+    // Locations map (used by orders_success)
+    if (!isset($locations) || !is_array($locations)) {
+        $locFile = (function_exists('runtime_base_dir') ? runtime_base_dir() : 'C:\\jetinno_runtime') . DIRECTORY_SEPARATOR . 'state' . DIRECTORY_SEPARATOR . 'jetinno_locations_' . $userId . '.json';
+        $locations = [];
+        if (is_file($locFile)) {
+            $raw = @file_get_contents($locFile);
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) $locations = $decoded;
+        }
+    }
+
+    // Expose to modules (included inside function scope)
+    $GLOBALS['stamp'] = $stamp;
+    $GLOBALS['outDir'] = $outDir;
+    $GLOBALS['chatId'] = $chatId;
+    $GLOBALS['locations'] = $locations;
+
     // Main modules (controlled by $CFG['modules'])
     run_module_file(cfg_module_enabled($CFG, 'errors', true),        'errors',        __DIR__ . '/modules/errors.php');
     run_module_file(cfg_module_enabled($CFG, 'reboot', true),        'boiler_reboot', __DIR__ . '/modules/boiler_reboot.php');
