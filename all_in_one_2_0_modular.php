@@ -71,11 +71,7 @@ require $__initPath;
 
 // load config
 // load config (app + secrets)
-$CFG_APP = require __DIR__ . DIRECTORY_SEPARATOR . 'config.app.php';
-$CFG_SECRET = [];
-$__secretPath = __DIR__ . DIRECTORY_SEPARATOR . 'config.secret.php';
-if (is_file($__secretPath)) { $CFG_SECRET = require $__secretPath; }
-$CFG = array_replace_recursive($CFG_APP, $CFG_SECRET);
+$CFG = require __DIR__ . DIRECTORY_SEPARATOR . 'config.php';
 date_default_timezone_set($CFG['timezone'] ?? 'Europe/Istanbul');
 
 

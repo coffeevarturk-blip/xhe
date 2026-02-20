@@ -13,7 +13,7 @@ return [
         'errors'           => true,
         'reboot'           => true,
         'supply'           => true,
-        'sync'             => false,
+        'sync'             => true,
         'orders_failed'    => true,
         'orders_success'   => true,
         'sales_syrups'     => true,

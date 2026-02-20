@@ -1,26 +1,17 @@
-PATCH: Управление модулями через config.php
+PATCH: Конфиги и управление модулями (2026-02-20)
 
 Что сделано:
-1) config.php — добавлен блок 'modules' для глобального включения/выключения модулей.
-2) all_in_one_2_0_modular.php — уже использует $CFG['modules'] через cfg_module_enabled() и run_module_file().
+1) config.php превращён в ЕДИНУЮ точку входа: он грузит config.app.php + config.secret.php и делает merge:
+   $CFG = array_replace_recursive($APP, $SECRET);
 
-Ключи modules (config.php):
-- errors            : парсинг ошибок/варнингов
-- reboot            : boiler reboot (boiler_reboot.php)
-- supply            : остатки/дозаправка (supply.php)
-- sync              : auto machine sync (machine_sync.php)
-- orders_failed     : заказы success=0 (orders.php)
-- orders_success    : заказы success=1 (orders_success.php)
-- sales_syrups      : сиропы/продажи по сиропам (sales_syrups.php)
-- telegram_commands : обработка команд/контрол (telegram_commands.php)
-- manual_reboot     : ручной reboot (manual_reboot.php)
-- manual_sync       : ручной sync (manual_sync.php)
+2) all_in_one_2_0_modular.php теперь грузит ТОЛЬКО config.php.
+   Это устраняет ситуацию "смотрим один конфиг, а работает другой".
 
-Важно:
-- Локальные настройки по аккаунтам (telegram_notify / кому слать) остаются как раньше.
-- Если модуль выключен (false), файл модуля не подключается и код не исполняется.
+Файлы:
+- config.app.php     (логика/флаги, без секретов)
+- config.secret.php  (секреты: токены/пароли, НЕ коммитить)
+- config.php         (сборщик/merge)
+- all_in_one_2_0_modular.php (обновлённый require config.php)
 
-Файлы в архиве:
-- config.php
-- all_in_one_2_0_modular.php
-- README_patch.txt
+Проверка:
+В логах после старта должен быть один источник конфигурации: config.php.
