@@ -25,64 +25,89 @@ require_once __DIR__ . '/all_in_one_2_0_lib.php';
  * - config.php НЕ трогаем.
  */
 
-// Robust init.php loader for XHE (works from Git folder or symlink)
-$initCandidates = [];
+// ---- XHE init loader (robust) ----
+$__initCandidates = [];
 
-// 1) Try from current working directory (often XHE sets CWD)
-$initCandidates[] = getcwd() . DIRECTORY_SEPARATOR . 'Templates' . DIRECTORY_SEPARATOR . 'init.php';
-$initCandidates[] = getcwd() . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'Templates' . DIRECTORY_SEPARATOR . 'init.php';
+// Try relative to this script (old layout: My Scripts/../Templates)
+$__initCandidates[] = __DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'Templates' . DIRECTORY_SEPARATOR . 'init.php';
 
-// 2) Try from script directory
-$initCandidates[] = __DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'Templates' . DIRECTORY_SEPARATOR . 'init.php';
+// Try relative to current working directory (sometimes XHE sets CWD)
+$__cwd = getcwd();
+if (is_string($__cwd) && $__cwd !== '') {
+    $__initCandidates[] = $__cwd . DIRECTORY_SEPARATOR . 'Templates' . DIRECTORY_SEPARATOR . 'init.php';
+    $__initCandidates[] = $__cwd . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'Templates' . DIRECTORY_SEPARATOR . 'init.php';
+}
 
-// 3) Climb up from CWD and __DIR__ looking for /Templates/init.php
-$roots = [getcwd(), __DIR__];
-foreach ($roots as $root) {
-    $p = $root;
-    for ($i = 0; $i < 6; $i++) {
-        $candidate = $p . DIRECTORY_SEPARATOR . 'Templates' . DIRECTORY_SEPARATOR . 'init.php';
-        $initCandidates[] = $candidate;
-        $parent = dirname($p);
-        if ($parent === $p) break;
-        $p = $parent;
+// Climb up from __DIR__ and CWD to find Templates/init.php
+$__roots = [__DIR__];
+if (is_string($__cwd) && $__cwd !== '') $__roots[] = $__cwd;
+
+foreach ($__roots as $__root) {
+    $__p = $__root;
+    for ($__k = 0; $__k < 7; $__k++) {
+        $__cand = $__p . DIRECTORY_SEPARATOR . 'Templates' . DIRECTORY_SEPARATOR . 'init.php';
+        $__initCandidates[] = $__cand;
+        $__parent = dirname($__p);
+        if ($__parent === $__p) break;
+        $__p = $__parent;
     }
 }
 
-// 4) Common install locations (best-effort)
-foreach (['D:\\XWeb', 'C:\\XWeb', 'D:\\', 'C:\\'] as $base) {
-    if (!is_dir($base)) continue;
-    $hits = @glob(rtrim($base, '\\') . '\\*\\Templates\\init.php');
-    if (is_array($hits)) {
-        foreach ($hits as $h) $initCandidates[] = $h;
-    }
+// Common install locations (best-effort)
+$__initCandidates[] = 'D:\\XWeb\\Human Emulator Studio DEMO 7.0.76\\Templates\\init.php';
+$__initCandidates[] = 'D:\\XWeb\\Human Emulator Studio\\Templates\\init.php';
+
+$__initPath = null;
+foreach ($__initCandidates as $__c) {
+    $__c = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $__c);
+    if (is_file($__c)) { $__initPath = $__c; break; }
 }
 
-$initPath = null;
-foreach ($initCandidates as $c) {
-    $c = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $c);
-    if (is_file($c)) { $initPath = $c; break; }
+if (!$__initPath) {
+    die("XHE init.php not found. Checked:\n- " . implode("\n- ", array_unique($__initCandidates)) . "\n");
 }
-
-if (!$initPath) {
-    die("XHE init.php not found. Checked:
-- " . implode("
-- ", array_unique($initCandidates)) . "
-");
-}
-
-require $initPath;
+require $__initPath;
+// ---- end XHE init loader ----
 
 // load config
-$CFG_APP = require __DIR__.'/config.app.php';
-
+// load config (app + secrets)
+$CFG_APP = require __DIR__ . DIRECTORY_SEPARATOR . 'config.app.php';
 $CFG_SECRET = [];
-$secretPath = __DIR__.'/config.secret.php';
-if (is_file($secretPath)) {
-    $CFG_SECRET = require $secretPath;
-}
-
+$__secretPath = __DIR__ . DIRECTORY_SEPARATOR . 'config.secret.php';
+if (is_file($__secretPath)) { $CFG_SECRET = require $__secretPath; }
 $CFG = array_replace_recursive($CFG_APP, $CFG_SECRET);
 date_default_timezone_set($CFG['timezone'] ?? 'Europe/Istanbul');
+
+
+
+// -------------------- Module framework --------------------
+/**
+ * Return module enabled flag with default.
+ */
+function cfg_module_enabled(array $CFG, string $key, bool $default): bool {
+    $mods = $CFG['modules'] ?? null;
+    if (!is_array($mods)) return $default;
+    $v = $mods[$key] ?? $default;
+    return (bool)$v;
+}
+
+/**
+ * Run a module file if enabled, with safe logging.
+ * $label is used in logs.
+ */
+function run_module_file(bool $enabled, string $label, string $filePath): void {
+    if (!$enabled) {
+        if (function_exists('xhe_log')) xhe_log('modules', "SKIP {$label}", "DEBUG");
+        return;
+    }
+    if (!is_file($filePath)) {
+        if (function_exists('xhe_log')) xhe_log('modules', "MISSING {$label} file={$filePath}", "ERROR");
+        return;
+    }
+    if (function_exists('xhe_log')) xhe_log('modules', "RUN {$label}", "DEBUG");
+    require $filePath;
+}
+// -------------------- End module framework --------------------
 
 // core helpers/state/telegram
 $functionsPath = __DIR__ . DIRECTORY_SEPARATOR . "functions.php";
@@ -187,33 +212,38 @@ $accCount = 0;
 foreach ($accounts as $acc) {
     $userId = (int)($acc['user_id'] ?? 0);
 
-        // PRELOAD locations from supply-state (for errors/syrup before supply runs)
-        $locFile = runtime_base_dir() . "\\state\\jetinno_locations_{$userId}.json";
-        if (is_file($locFile)) {
-            $tmp = json_decode((string)@file_get_contents($locFile), true);
-            if (is_array($tmp) && is_array($tmp['map'] ?? null)) {
-                if (!isset($locations) || !is_array($locations)) $locations = [];
-                $locations = $tmp['map'] + $locations;
-            }
+    // PRELOAD locations from supply-state (for errors/syrup before supply runs)
+    $locFile = runtime_base_dir() . "\\state\\jetinno_locations_{$userId}.json";
+    if (is_file($locFile)) {
+        $tmp = json_decode((string)@file_get_contents($locFile), true);
+        if (is_array($tmp) && is_array($tmp['map'] ?? null)) {
+            if (!isset($locations) || !is_array($locations)) $locations = [];
+            $locations = $tmp['map'] + $locations;
         }
-        
+    }
+
     $accName = (string)($acc['name'] ?? "user{$userId}");
     if ($userId <= 0) continue;
     $accCount++;
     $accountKey = $accName;
-    require __DIR__ . '/modules/account_prelude.php';
-    require __DIR__ . '/modules/errors.php';
-    require __DIR__ . '/modules/boiler_reboot.php';
-    require __DIR__ . '/modules/supply.php';
-       require __DIR__ . '/modules/machine_sync.php';
-    require __DIR__ . '/modules/orders.php';
-    require __DIR__ . '/modules/orders_success.php';
-    require __DIR__ . '/modules/sales_syrups.php';
-       require_once __DIR__ . '/modules/manual_reboot.php';
-          require_once __DIR__ . '/modules/manual_sync.php';
-       require_once __DIR__ . '/modules/telegram_commands.php';
-}
 
+    // Always load per-account prelude (sets $state, $notifyState, chat ids, etc.)
+    require __DIR__ . '/modules/account_prelude.php';
+
+    // Main modules (controlled by $CFG['modules'])
+    run_module_file(cfg_module_enabled($CFG, 'errors', true),        'errors',        __DIR__ . '/modules/errors.php');
+    run_module_file(cfg_module_enabled($CFG, 'reboot', true),        'boiler_reboot', __DIR__ . '/modules/boiler_reboot.php');
+    run_module_file(cfg_module_enabled($CFG, 'supply', true),        'supply',        __DIR__ . '/modules/supply.php');
+    run_module_file(cfg_module_enabled($CFG, 'sync', false),         'machine_sync',  __DIR__ . '/modules/machine_sync.php');
+    run_module_file(cfg_module_enabled($CFG, 'orders_failed', true), 'orders_failed', __DIR__ . '/modules/orders.php');
+    run_module_file(cfg_module_enabled($CFG, 'orders_success', true),'orders_success',__DIR__ . '/modules/orders_success.php');
+    run_module_file(cfg_module_enabled($CFG, 'sales_syrups', true),  'sales_syrups',  __DIR__ . '/modules/sales_syrups.php');
+
+    // Control/maintenance modules (usually always on, but configurable)
+    run_module_file(cfg_module_enabled($CFG, 'telegram_commands', true), 'telegram_commands', __DIR__ . '/modules/telegram_commands.php');
+    run_module_file(cfg_module_enabled($CFG, 'manual_reboot', true),    'manual_reboot',    __DIR__ . '/modules/manual_reboot.php');
+    run_module_file(cfg_module_enabled($CFG, 'manual_sync', true),      'manual_sync',      __DIR__ . '/modules/manual_sync.php');
+}
 // ---- END MODULES ----
 
 if (function_exists('state_save')) state_save($mainStateFile, $state);

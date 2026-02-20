@@ -6,7 +6,22 @@
 return [
     'timezone' => 'Europe/Istanbul',
 
-    'xhe' => [
+    
+
+    // Module toggles (true=run, false=skip)
+    'modules' => [
+        'errors'           => true,
+        'reboot'           => true,
+        'supply'           => true,
+        'sync'             => false,
+        'orders_failed'    => true,
+        'orders_success'   => true,
+        'sales_syrups'     => true,
+        'telegram_commands'=> true,
+        'manual_reboot'    => true,
+        'manual_sync'      => true,
+    ],
+'xhe' => [
         'host' => '127.0.0.1:7010',
     ],
 
