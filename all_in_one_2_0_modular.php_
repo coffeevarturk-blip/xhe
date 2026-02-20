@@ -25,63 +25,10 @@ require_once __DIR__ . '/all_in_one_2_0_lib.php';
  * - config.php НЕ трогаем.
  */
 
-// Robust init.php loader for XHE (works from Git folder or symlink)
-$initCandidates = [];
-
-// 1) Try from current working directory (often XHE sets CWD)
-$initCandidates[] = getcwd() . DIRECTORY_SEPARATOR . 'Templates' . DIRECTORY_SEPARATOR . 'init.php';
-$initCandidates[] = getcwd() . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'Templates' . DIRECTORY_SEPARATOR . 'init.php';
-
-// 2) Try from script directory
-$initCandidates[] = __DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'Templates' . DIRECTORY_SEPARATOR . 'init.php';
-
-// 3) Climb up from CWD and __DIR__ looking for /Templates/init.php
-$roots = [getcwd(), __DIR__];
-foreach ($roots as $root) {
-    $p = $root;
-    for ($i = 0; $i < 6; $i++) {
-        $candidate = $p . DIRECTORY_SEPARATOR . 'Templates' . DIRECTORY_SEPARATOR . 'init.php';
-        $initCandidates[] = $candidate;
-        $parent = dirname($p);
-        if ($parent === $p) break;
-        $p = $parent;
-    }
-}
-
-// 4) Common install locations (best-effort)
-foreach (['D:\\XWeb', 'C:\\XWeb', 'D:\\', 'C:\\'] as $base) {
-    if (!is_dir($base)) continue;
-    $hits = @glob(rtrim($base, '\\') . '\\*\\Templates\\init.php');
-    if (is_array($hits)) {
-        foreach ($hits as $h) $initCandidates[] = $h;
-    }
-}
-
-$initPath = null;
-foreach ($initCandidates as $c) {
-    $c = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $c);
-    if (is_file($c)) { $initPath = $c; break; }
-}
-
-if (!$initPath) {
-    die("XHE init.php not found. Checked:
-- " . implode("
-- ", array_unique($initCandidates)) . "
-");
-}
-
-require $initPath;
+require("../Templates/init.php");
 
 // load config
-$CFG_APP = require __DIR__.'/config.app.php';
-
-$CFG_SECRET = [];
-$secretPath = __DIR__.'/config.secret.php';
-if (is_file($secretPath)) {
-    $CFG_SECRET = require $secretPath;
-}
-
-$CFG = array_replace_recursive($CFG_APP, $CFG_SECRET);
+$CFG = require __DIR__ . DIRECTORY_SEPARATOR . 'config.php';
 date_default_timezone_set($CFG['timezone'] ?? 'Europe/Istanbul');
 
 // core helpers/state/telegram
