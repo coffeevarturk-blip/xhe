@@ -104,6 +104,25 @@ function run_module_file(bool $enabled, string $label, string $filePath): void {
         if (function_exists('xhe_log')) xhe_log('modules', "MISSING {$label} file={$filePath}", "ERROR");
         return;
     }
+
+    // Bridge context into this function-scope include.
+    // Many legacy modules expect variables like $CFG, $acc, $userId, $accName, $accountKey, $state, $notifyState
+    // to be available in the current scope (they used to be included in the main script scope).
+    $CFG        = $GLOBALS['CFG']        ?? null;
+    $acc        = $GLOBALS['acc']        ?? null;
+    $userId     = $GLOBALS['userId']     ?? null;
+    $accName    = $GLOBALS['accName']    ?? null;
+    $accountKey = $GLOBALS['accountKey'] ?? null;
+
+    $cookieStr  = $GLOBALS['cookieStr']  ?? null;
+    // State arrays are commonly mutated by modules; keep them by-reference if present
+    if (array_key_exists('state', $GLOBALS)) {
+        $state = &$GLOBALS['state'];
+    }
+    if (array_key_exists('notifyState', $GLOBALS)) {
+        $notifyState = &$GLOBALS['notifyState'];
+    }
+
     if (function_exists('xhe_log')) xhe_log('modules', "RUN {$label}", "DEBUG");
     require $filePath;
 }
@@ -227,9 +246,21 @@ foreach ($accounts as $acc) {
     $accCount++;
     $accountKey = $accName;
 
+
+    // Expose per-account context for module includes (included inside a function scope)
+    $GLOBALS['CFG']        = $CFG;
+    $GLOBALS['acc']        = $acc;
+    $GLOBALS['userId']     = $userId;
+    $GLOBALS['accName']    = $accName;
+    $GLOBALS['accountKey'] = $accountKey;
+    $GLOBALS['cookieStr']  = $cookieStr;
     // Always load per-account prelude (sets $state, $notifyState, chat ids, etc.)
     require __DIR__ . '/modules/account_prelude.php';
 
+
+    // account_prelude typically sets $state and $notifyState in the current scope
+    if (isset($state))       { $GLOBALS['state'] = &$state; }
+    if (isset($notifyState)) { $GLOBALS['notifyState'] = &$notifyState; }
     // Main modules (controlled by $CFG['modules'])
     run_module_file(cfg_module_enabled($CFG, 'errors', true),        'errors',        __DIR__ . '/modules/errors.php');
     run_module_file(cfg_module_enabled($CFG, 'reboot', true),        'boiler_reboot', __DIR__ . '/modules/boiler_reboot.php');
@@ -258,7 +289,7 @@ if (function_exists('state_save')) state_save($mainStateFile, $state);
             admin_critical('exception', $e->getMessage(), $k, $ADMIN_CHAT_ID, $state, $notifyState);
         }
     }
-    tg_commands_poll($CFG);
+    if (function_exists('tg_commands_poll')) { tg_commands_poll($CFG); }
     if (!isset($notifyState) || !is_array($notifyState)) $notifyState = [];
     manual_reboot_process_queue($acc, $accountKey, (int)$userId, (string)$cookieStr, $state, $locations, $notifyState);
     sleep(60);
