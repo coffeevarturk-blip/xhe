@@ -229,6 +229,40 @@ if (!function_exists('tgcmd_handle_command')) {
 
         $cooldown = (int)($CFG['telegram']['commands']['cooldown_sec'] ?? 5);
         $cooldownHeavy = (int)($CFG['telegram']['commands']['cooldown_heavy_sec'] ?? 20);
+		
+		// ===== CMD: /make <VMC> <DRINK_ID>  (direct) =====
+if ($cmd === '/make') {
+
+    // ожидаем: /make 81941 125
+    $vmc      = trim((string)($args[0] ?? ''));
+    $drink_id = trim((string)($args[1] ?? ''));
+
+    if ($vmc === '' || $drink_id === '') {
+        tgcmd_send_message($CFG, $chatId, "Формат: /make 81941 125");
+        return;
+    }
+
+    if (!function_exists('make_drink_universal')) {
+        tgcmd_send_message($CFG, $chatId, "MAKE: make_drink_universal() не найдена ❌");
+        return;
+    }
+
+    // прямое выполнение (без lock, без доп проверок)
+    $res = make_drink_universal($vmc, $drink_id);
+    $st  = (string)($res['status'] ?? 'ui_error');
+
+    if ($st === 'success') {
+        tgcmd_send_message($CFG, $chatId, "✅ MAKE OK | VMC: $vmc | DRINK: $drink_id");
+    } elseif ($st === 'vmc_invalid') {
+        tgcmd_send_message($CFG, $chatId, "❌ MAKE | VMC неверный: $vmc");
+    } elseif ($st === 'drink_not_found') {
+        tgcmd_send_message($CFG, $chatId, "❌ MAKE | Напиток не найден: $drink_id");
+    } else {
+        tgcmd_send_message($CFG, $chatId, "❌ MAKE | UI ERROR");
+    }
+
+    return;
+}
 
         if ($cmd === '/start' || $cmd === '/help' || $cmd === '/?') {
             if (!tgcmd_rate_limit_ok($state, $chatId, 'help', $cooldown)) return;
