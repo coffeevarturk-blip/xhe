@@ -34,6 +34,9 @@ if ($staleAfterSec <= 0) {
     $staleAfterSec = ($staleHours > 0) ? ($staleHours * 3600) : $defaultStaleAfterSec;
 }
 $cooldownSec = (int)($CFG['sync']['cooldown_sec'] ?? $defaultCooldownSec);
+// ---- HARD LIMIT: do not sync same machine more than once per 24h ----
+$hardMinRepeatSec = (int)($CFG['sync']['hard_min_repeat_sec'] ?? 86400); // 24 hours
+
 
 // Optional global master switch (if present)
 if (isset($CFG['sync']['enabled']) && !$CFG['sync']['enabled']) {
@@ -154,6 +157,12 @@ foreach ($vmcList as $vmc) {
     $lastTs = (int)($state['sync']['machine'][$vmc]['ts'] ?? 0);
     if ($lastTs > 0 && ($now - $lastTs) <= $cooldownSec) {
         if (function_exists('xhe_log')) xhe_log('sync', "SKIP cooldown vmc={$vmc} age_sec=" . ($now - $lastTs), 'INFO');
+        continue;
+    }
+
+    // Hard 24h protection
+    if ($lastTs > 0 && ($now - $lastTs) <= $hardMinRepeatSec) {
+        if (function_exists('xhe_log')) xhe_log('sync', "SKIP hard_24h vmc={$vmc} age_sec=" . ($now - $lastTs), 'INFO');
         continue;
     }
 

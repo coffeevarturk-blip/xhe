@@ -8,6 +8,15 @@
             ? isTelegramNotifyEnabled($acc, 'supply')
             : (bool)($acc['telegram_notify']['supply'] ?? true);
 
+        // Supply anti-spam / cooldown (per machine + ingredient key)
+        // Default: 1 hour. Can be overridden in config: $CFG['supply']['cooldown_sec']
+        $supplyCooldown = 3600;
+        if (isset($CFG) && is_array($CFG) && isset($CFG['supply']) && is_array($CFG['supply']) && isset($CFG['supply']['cooldown_sec'])) {
+            $supplyCooldown = (int)$CFG['supply']['cooldown_sec'];
+        }
+        if ($supplyCooldown < 0) $supplyCooldown = 0;
+
+
         $parsedSupply = [];
         $supplySource = 'none';
 
