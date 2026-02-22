@@ -330,7 +330,19 @@ if (function_exists('state_save')) state_save($mainStateFile, $state);
     if (function_exists('tg_commands_poll')) { tg_commands_poll($CFG); }
     if (!isset($notifyState) || !is_array($notifyState)) $notifyState = [];
     manual_reboot_process_queue($acc, $accountKey, (int)$userId, (string)$cookieStr, $state, $locations, $notifyState);
-    sleep(60);
+//$pollSec  = 5;   // как часто опрашивать Telegram
+//$totalSec = 60;  // общая пауза между проходами AIO
+//
+//$steps = (int)ceil($totalSec / $pollSec);
+//for ($k = 0; $k < $steps; $k++) {
+//
+//    if (function_exists('tg_commands_poll')) {
+//        tg_commands_poll($CFG);   // <-- частый опрос команд
+//    }
+//
+//    sleep($pollSec);
+//}
+sleep(60);
     if (!isset($notifyState) || !is_array($notifyState)) $notifyState = [];
 manual_sync_process_queue($acc, $accountKey, (int)$userId, (string)$cookieStr, $state, $locations, $notifyState);
 }
