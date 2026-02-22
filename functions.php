@@ -853,3 +853,43 @@ function make_drink_universal($vmc, $drink_id)
         return ['status' => 'ui_error'];
     }
 }
+function get_location(int $userId, string $vmc): string {
+
+    $path = runtime_base_dir() . "\\state\\jetinno_locations_{$userId}.json";
+    if (!file_exists($path)) return '';
+
+    $raw = @file_get_contents($path);
+    if ($raw === false || trim($raw) === '') return '';
+
+    $j = json_decode($raw, true);
+    if (!is_array($j)) return '';
+
+    $vmc = (string)$vmc;
+
+    // 1) ваш текущий формат: {"map": {"81941":"Depo"}}
+    if (isset($j['map']) && is_array($j['map']) && isset($j['map'][$vmc])) {
+        return trim((string)$j['map'][$vmc]);
+    }
+
+    // 2) альтернативный формат: {"by_vmc": {"81941":"Depo"}}
+    if (isset($j['by_vmc']) && is_array($j['by_vmc']) && isset($j['by_vmc'][$vmc])) {
+        return trim((string)$j['by_vmc'][$vmc]);
+    }
+
+    // 3) плоский формат: {"81941":"Depo"}
+    if (isset($j[$vmc]) && is_string($j[$vmc])) {
+        return trim((string)$j[$vmc]);
+    }
+
+    // 4) иногда ключи могут быть int в массиве (редко, но бывает) — пробуем найти по строковому сравнению
+    foreach (['map', 'by_vmc'] as $k) {
+        if (!isset($j[$k]) || !is_array($j[$k])) continue;
+        foreach ($j[$k] as $key => $val) {
+            if ((string)$key === $vmc && is_string($val) && trim($val) !== '') {
+                return trim($val);
+            }
+        }
+    }
+
+    return '';
+}

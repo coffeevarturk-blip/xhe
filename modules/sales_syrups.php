@@ -148,10 +148,7 @@ $agg = sales_aggregate($allSalesRows);
                 foreach ($agg['by_vmc'] as $vmcNo => $info) {
                     $i++;
                     if ($i > 5) break;
-                    $addr = '';
-                    if (isset($locations) && is_array($locations) && isset($locations[$vmcNo])) {
-                        $addr = trim((string)$locations[$vmcNo]);
-                    }
+                    $addr = get_location((int)$userId, (string)$vmcNo);
                     if ($addr === '') $addr = trim((string)($info['address'] ?? ''));
                     // guard: some exports put model (e.g. JL300) into address column
                     if (preg_match('/^JL\d+/i', $addr)) $addr = '';

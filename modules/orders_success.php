@@ -183,7 +183,7 @@ $colProd    = $find_col_ci($header, ['product name','product','ürün adı','uru
                 continue;
             }
 
-            $loc = function_exists('getLocation') ? (getLocation($locations, $vmcNo) ?? '') : '';
+            $loc = get_location((int)$userId, (string)$vmcNo);
             if ($loc === '') $loc = 'Unknown';
 
             $msg = "✅ NEW SALE | {$accName}\n".

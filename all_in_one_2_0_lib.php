@@ -758,7 +758,7 @@ if (!function_exists('syrup_display_name')) {
 function syrup_display_name(string $key): string {
     switch ($key) {
         case 'caramel': return 'Caramelli (карамель)';
-        case 'hazelnut': return 'Fındıklı (фундук)';
+        case 'hazelnut': return 'Fındıklı (орех)';
         case 'banana': return 'Muzlu (банан)';
         case 'strawberry': return 'Çilekli (клубника)';
         default: return $key;
@@ -1038,6 +1038,7 @@ function syrup_notify_stale(array $acc, array $scan, string $accName, int $userI
             xhe_log('syrup', "SKIP syrup notify (disabled in config) acc=" . (isset($acc['name'])?$acc['name']:'') , 'INFO');
             return;
         }
+		$addr = get_location((int)$userId, (string)$vmc);
         $msg = "🧴 SYRUP ALERT | {$accName}
 "
              . "VMC: {$vmc}" . ($addr !== '' ? " - {$addr}" : "") . "
