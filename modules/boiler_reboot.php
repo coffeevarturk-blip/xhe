@@ -22,7 +22,7 @@ if (!isset($btn)     && isset($GLOBALS['btn']))     $btn     = $GLOBALS['btn'];
 
 // If XHE objects are not available, skip safely (no fatal)
 if (!isset($browser) || !is_object($browser) || !isset($image) || !is_object($image) || !isset($input) || !is_object($input) || !isset($btn) || !is_object($btn)) {
-    xhe_log('reboot', 'SKIP boiler reboot: XHE objects missing', 'WARN');
+    xhe_log('reboot', 'NO_START reason=xhe_objects_missing', 'WARN');
     return;
 }
 
@@ -51,9 +51,51 @@ if (isset($byVmc) && is_array($byVmc)) {
 }
 
 if (!$targets) {
-    // no boiler error
+    // Fallback: read last exported errors_{userId}_*.json (same source as TG error notifications)
+    $base = function_exists('runtime_base_dir') ? runtime_base_dir() : 'c:\\jetinno_runtime';
+    $exportDir = rtrim($base, "\\/") . "\\export";
+    $pattern = $exportDir . "\\errors_{$userId}_*.json";
+    $files = glob($pattern);
+    if (is_array($files) && count($files) > 0) {
+        usort($files, function($a,$b){ return filemtime($b) <=> filemtime($a); });
+        $lastFile = $files[0];
+        $raw = @file_get_contents($lastFile);
+        $j = json_decode((string)$raw, true);
+        if (is_array($j) && isset($j['by_vmc']) && is_array($j['by_vmc'])) {
+            foreach ($j['by_vmc'] as $vmcNo => $levels) {
+                if (!is_array($levels)) continue;
+                $rows = $levels['ERROR'] ?? [];
+                if (!is_array($rows) || count($rows) === 0) continue;
+                foreach ($rows as $row) {
+                    // exported JSON uses Turkish keys, but our helpers err_col_code/time may still work if keys match
+                    $codeVal = (string)($row['Hata kodu'] ?? $row['Hata Kodu'] ?? $row['error_code'] ?? '');
+                    $codeVal = safe_s($codeVal);
+                    if ($codeVal !== $codeNeed) continue;
+
+                    $dt = (string)($row['Oluşma zamanı'] ?? $row['Olusma zamani'] ?? $row['time'] ?? '');
+                    $dt = safe_s($dt);
+                    $ts = parse_ts($dt);
+
+                    if (!isset($targets[(string)$vmcNo])) {
+                        $targets[(string)$vmcNo] = ['row'=>$row, 'ts'=>$ts];
+                    } else {
+                        $prevTs = (int)($targets[(string)$vmcNo]['ts'] ?? 0);
+                        if ($ts > $prevTs) $targets[(string)$vmcNo] = ['row'=>$row, 'ts'=>$ts];
+                    }
+                }
+            }
+            if ($targets) {
+                xhe_log('reboot', 'TARGETS source=last_errors_json file=' . basename($lastFile) . ' count=' . count($targets), 'INFO');
+            }
+        }
+    }
+}
+
+if (!$targets) {
+    xhe_log('reboot', 'NO_START reason=no_boiler_targets', 'INFO');
     return;
 }
+
 
 // Fetch boiler error page once (HTML) to extract machine links
 $urlBoilerError = "https://saas-hk.jetinno.com/error?user_id={$userId}&data_type=0&daterange=&vmc_no=&like=ERROR%3A7300&vmc_model=&error_code=&is_set=1&perPage=25&order_by%5Bkey%5D=&order_by%5Bvalue%5D=&export=0";
@@ -106,7 +148,7 @@ foreach ($targets as $vmcNo => $info) {
     $lastTs = (int)($state['reboot_global']['boiler'][$targetVmc]['ts'] ?? 0);
     if ($lastTs > 0 && (time() - $lastTs) <= $cooldownSec) {
         $byAcc = (string)($state['reboot_global']['boiler'][$targetVmc]['acc'] ?? '');
-        xhe_log('reboot', "SKIP cooldown global vmc={$targetVmc} last_acc={$byAcc} age_sec=".(time()-$lastTs), 'INFO');
+        xhe_log('reboot', "NO_START vmc={$targetVmc} reason=cooldown last_acc={$byAcc} age_sec=".(time()-$lastTs)." left_sec=".max(0, ($cooldownSec-(time()-$lastTs))), 'INFO');
         continue;
     }
 
@@ -120,7 +162,7 @@ foreach ($targets as $vmcNo => $info) {
     if ($location === '') $location = 'Unknown';
     $dt = safe_s((string)($targetRow[err_col_time()] ?? date('Y-m-d H:i:s')));
 
-    xhe_log('reboot', "Boiler error detected vmc={$targetVmc} loc={$location} -> reboot", 'INFO');
+    xhe_log('reboot', "START vmc={$targetVmc} loc={$location} reason=boiler_7300", 'INFO');
 
     $browser->close_all_tabs();
     $browser->navigate($machineUrl);
@@ -158,6 +200,8 @@ foreach ($targets as $vmcNo => $info) {
 
     // save global reboot state
     $state['reboot_global']['boiler'][$targetVmc] = ['ts' => time(), 'acc' => (string)$accountKey];
+
+    xhe_log('reboot', "DONE vmc={$targetVmc} saved_state=1", 'INFO');
 
     // telegram notify (optional)
     if ($notifyReboot && $chatId !== null && function_exists('tg_notify')) {

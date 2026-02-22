@@ -14,7 +14,49 @@
  * Запуск: как обычный PHP-скрипт в XHE.
  */
 
-require("../Templates/init.php");
+// ---- XHE init loader (robust) ----
+$__initCandidates = [];
+
+// Try relative to this script (old layout: My Scripts/../Templates)
+$__initCandidates[] = __DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'Templates' . DIRECTORY_SEPARATOR . 'init.php';
+
+// Try relative to current working directory (sometimes XHE sets CWD)
+$__cwd = getcwd();
+if (is_string($__cwd) && $__cwd !== '') {
+    $__initCandidates[] = $__cwd . DIRECTORY_SEPARATOR . 'Templates' . DIRECTORY_SEPARATOR . 'init.php';
+    $__initCandidates[] = $__cwd . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'Templates' . DIRECTORY_SEPARATOR . 'init.php';
+}
+
+// Climb up from __DIR__ and CWD to find Templates/init.php
+$__roots = [__DIR__];
+if (is_string($__cwd) && $__cwd !== '') $__roots[] = $__cwd;
+
+foreach ($__roots as $__root) {
+    $__p = $__root;
+    for ($__k = 0; $__k < 7; $__k++) {
+        $__cand = $__p . DIRECTORY_SEPARATOR . 'Templates' . DIRECTORY_SEPARATOR . 'init.php';
+        $__initCandidates[] = $__cand;
+        $__parent = dirname($__p);
+        if ($__parent === $__p) break;
+        $__p = $__parent;
+    }
+}
+
+// Common install locations (best-effort)
+$__initCandidates[] = 'D:\\XWeb\\Human Emulator Studio DEMO 7.0.76\\Templates\\init.php';
+$__initCandidates[] = 'D:\\XWeb\\Human Emulator Studio\\Templates\\init.php';
+
+$__initPath = null;
+foreach ($__initCandidates as $__c) {
+    $__c = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $__c);
+    if (is_file($__c)) { $__initPath = $__c; break; }
+}
+
+if (!$__initPath) {
+    die("XHE init.php not found. Checked:\n- " . implode("\n- ", array_unique($__initCandidates)) . "\n");
+}
+require $__initPath;
+// ---- end XHE init loader ----
 
 $CFG = @require __DIR__ . DIRECTORY_SEPARATOR . 'config.php';
 if (is_array($CFG) && !empty($CFG['timezone'])) {
