@@ -64,8 +64,58 @@ for ($page=1; $page<=$maxPagesSales; $page++) {
         xhe_log('sales', "NO TIME COLUMN in sales CSV; fallback to daterange-only mode (page=1). headers={$hdrKeys}", 'WARNING');
         $canStopByDate = false;
         // собираем всё что пришло на странице 1
-        foreach ($assoc as $r) { $allSalesRows[] = $r; }
-        break;
+        foreach ($assoc as $r) {
+            $allSalesRows[] = $r;
+
+            // --- Save TOP snapshot after EACH added sale row ---
+            $aggNow = sales_aggregate($allSalesRows);
+
+            // Build TOP-5 by amount
+            $rowsNow = [];
+            $byVmcNow = (array)($aggNow['by_vmc'] ?? []);
+            foreach ($byVmcNow as $k => $v) {
+                $vmc = '';
+                if (is_string($k) && preg_match('~^\d{4,}$~', $k)) $vmc = $k;
+                if (!$vmc && is_array($v)) $vmc = (string)($v['vmc'] ?? $v['vmc_no'] ?? $v['device_no'] ?? '');
+                $vmc = preg_replace('~\D+~', '', (string)$vmc);
+                if ($vmc === '') continue;
+
+                $amount = (float)($v['amount'] ?? $v['total_amount'] ?? $v['sum'] ?? 0);
+                $count  = (int)($v['count'] ?? $v['total_count'] ?? $v['cnt'] ?? 0);
+
+                // Address: prefer what's already in row
+                $addr = (string)($v['address'] ?? $v['location'] ?? $v['name'] ?? '');
+
+                $rowsNow[] = ['vmc' => $vmc, 'address' => $addr, 'amount' => $amount, 'count' => $count];
+            }
+
+            usort($rowsNow, function($a, $b) {
+                $da = (float)($a['amount'] ?? 0);
+                $db = (float)($b['amount'] ?? 0);
+                if ($db == $da) return (int)($b['count'] ?? 0) <=> (int)($a['count'] ?? 0);
+                return $db <=> $da;
+            });
+            $top5 = array_slice($rowsNow, 0, 5);
+
+            $topPath = $outDir . "\\sales_top_{$userId}.json";
+            $payload = [
+                'account'      => $accName,
+                'user_id'      => $userId,
+                'updated_at'   => date('c'),
+                'datemonth'    => $datemonthSales,
+                'daterange'    => $today . "~" . $today,
+                'rows_today'   => count($allSalesRows),
+                'total_amount' => (float)($aggNow['total_amount'] ?? 0),
+                'total_count'  => (int)($aggNow['total_count'] ?? 0),
+                'top5'         => $top5,
+            ];
+
+            // atomic write
+            $tmp = $topPath . ".tmp";
+            @file_put_contents($tmp, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+            @rename($tmp, $topPath);
+        }
+break;
     }
 
     $added = 0;

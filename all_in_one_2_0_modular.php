@@ -129,6 +129,8 @@ function run_module_file(bool $enabled, string $label, string $filePath): void {
 // -------------------- End module framework --------------------
 
 // core helpers/state/telegram
+              require_once __DIR__ . '/modules/sales_summary.php';
+require_once __DIR__ . '/modules/sales_process.php';
 $functionsPath = __DIR__ . DIRECTORY_SEPARATOR . "functions.php";
 if (file_exists($functionsPath)) {
     require_once $functionsPath;
@@ -220,12 +222,14 @@ try {
 
     $cookieStr = xhe_get_cookie_string($browser ?? null, $webpage ?? null);
     xhe_log('error_scan', "COOKIE_LEN=" . strlen($cookieStr), "DEBUG");
-
+// $res = sales_process_today($acc, (int)$userId, (string)$cookieStr, (string)$accountKey, $state, $notifyState); // moved inside foreach
 //require __DIR__ . '/test_manual_sync_81941.php';
 //exit;
 // ---- MODULES ----
 require_once __DIR__ . '/modules/state.php';
-
+require_once __DIR__ . '/modules/sales_summary.php';
+require_once __DIR__ . '/modules/sales_process.php';
+require_once __DIR__ . '/modules/manual_reboot_compat.php';
 $accCount = 0;
 
 foreach ($accounts as $acc) {
@@ -246,6 +250,12 @@ foreach ($accounts as $acc) {
     $accCount++;
     $accountKey = $accName;
 
+
+    // DAILY SALES SUMMARY
+    if (!isset($notifyState) || !is_array($notifyState)) $notifyState = [];
+//    if (function_exists('sales_process_today')) {
+//        sales_process_today($acc, (int)$userId, (string)$cookieStr, (string)$accountKey, $state, $notifyState);
+//    }
 
     // Expose per-account context for module includes (included inside a function scope)
     $GLOBALS['CFG']        = $CFG;
@@ -308,10 +318,13 @@ foreach ($accounts as $acc) {
     run_module_file(cfg_module_enabled($CFG, 'orders_success', true),'orders_success',__DIR__ . '/modules/orders_success.php');
     run_module_file(cfg_module_enabled($CFG, 'sales_syrups', true),  'sales_syrups',  __DIR__ . '/modules/sales_syrups.php');
 
+
     // Control/maintenance modules (usually always on, but configurable)
     run_module_file(cfg_module_enabled($CFG, 'telegram_commands', true), 'telegram_commands', __DIR__ . '/modules/telegram_commands.php');
     run_module_file(cfg_module_enabled($CFG, 'manual_reboot', true),    'manual_reboot',    __DIR__ . '/modules/manual_reboot.php');
     run_module_file(cfg_module_enabled($CFG, 'manual_sync', true),      'manual_sync',      __DIR__ . '/modules/manual_sync.php');
+                    require_once __DIR__ . '/modules/manual_reboot_compat.php';
+require_once __DIR__ . '/modules/manual_sync_compat.php';
 }
 // ---- END MODULES ----
 
@@ -329,21 +342,37 @@ if (function_exists('state_save')) state_save($mainStateFile, $state);
     }
     if (function_exists('tg_commands_poll')) { tg_commands_poll($CFG); }
     if (!isset($notifyState) || !is_array($notifyState)) $notifyState = [];
-    manual_reboot_process_queue($acc, $accountKey, (int)$userId, (string)$cookieStr, $state, $locations, $notifyState);
-//$pollSec  = 5;   // как часто опрашивать Telegram
-//$totalSec = 60;  // общая пауза между проходами AIO
-//
-//$steps = (int)ceil($totalSec / $pollSec);
-//for ($k = 0; $k < $steps; $k++) {
-//
-//    if (function_exists('tg_commands_poll')) {
-//        tg_commands_poll($CFG);   // <-- частый опрос команд
-//    }
-//
-//    sleep($pollSec);
-//}
-sleep(60);
+// if (function_exists('manual_reboot_process_queue')) manual_reboot_process_queue($acc, $accountKey, (int)$userId, (string)$cookieStr, $state, $locations, $notifyState); // old signature
+    // MANUAL REBOOT QUEUE
+    if (function_exists('manual_reboot_process_queue')) {
+        if (function_exists('manual_reboot_process_queue')) manual_reboot_process_queue($acc, (int)$userId, (string)$cookieStr, (string)$accountKey, $state, $notifyState);
+    }
+$pollSec  = 5;   // как часто опрашивать Telegram
+$totalSec = 10;  // общая пауза между проходами AIO
+
+$steps = (int)ceil($totalSec / $pollSec);
+for ($k = 0; $k < $steps; $k++) {
+
+    if (function_exists('tg_commands_poll')) {
+        tg_commands_poll($CFG);   // <-- частый опрос команд
+    }
+
+   // sleep($pollSec);
+}
+//sleep(60);
     if (!isset($notifyState) || !is_array($notifyState)) $notifyState = [];
-manual_sync_process_queue($acc, $accountKey, (int)$userId, (string)$cookieStr, $state, $locations, $notifyState);
+if (function_exists('manual_sync_process_queue')) manual_sync_process_queue($acc, $accountKey, (int)$userId, (string)$cookieStr, $state, $locations, $notifyState);
 }
 if (isset($app)) $app->quit();
+
+if (!function_exists('manual_sync_process_queue')) {
+    if (function_exists('xhe_log')) {
+        xhe_log('manual_sync', 'manual_sync_process_queue() not found - skipped', 'WARNING');
+    }
+}
+
+if (!function_exists('manual_reboot_process_queue')) {
+    if (function_exists('xhe_log')) {
+        xhe_log('manual_reboot', 'manual_reboot_process_queue() not found - skipped', 'WARNING');
+    }
+}

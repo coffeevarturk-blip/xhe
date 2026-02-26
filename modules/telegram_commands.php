@@ -205,22 +205,385 @@ if (!function_exists('tgcmd_parse_cmd')) {
     }
 }
 
-if (!function_exists('tgcmd_sales_today_summary')) {
-    function tgcmd_sales_today_summary(string $dateYmd = ''): string {
-        // Hook: if you already have sales summary function, use it
-        if (function_exists('build_sales_summary_text')) {
-            // expected signature build_sales_summary_text($dateYmd)
-            return (string)build_sales_summary_text($dateYmd);
+if (!function_exists('tgcmd_sales_get_accounts')) {
+    function tgcmd_sales_get_accounts(array $CFG): array {
+        // Try common locations for accounts list
+        $candidates = [];
+
+        if (isset($CFG['accounts']) && is_array($CFG['accounts'])) $candidates[] = $CFG['accounts'];
+        if (isset($CFG['jetinno']['accounts']) && is_array($CFG['jetinno']['accounts'])) $candidates[] = $CFG['jetinno']['accounts'];
+        if (isset($CFG['jetinno_accounts']) && is_array($CFG['jetinno_accounts'])) $candidates[] = $CFG['jetinno_accounts'];
+        if (isset($CFG['config']['accounts']) && is_array($CFG['config']['accounts'])) $candidates[] = $CFG['config']['accounts'];
+
+        foreach ($candidates as $arr) {
+            // accept first non-empty
+            if (is_array($arr) && count($arr) > 0) return $arr;
+        }
+        return [];
+    }
+}
+
+if (!function_exists('tgcmd_sales_resolve_account')) {
+    function tgcmd_sales_resolve_account(array $CFG, string $chatId, array $args): array {
+        // returns [acc(array), accountKey(string)]
+        $accounts = tgcmd_sales_get_accounts($CFG);
+
+        // If first arg matches account name, use it (admin can query any)
+        $arg0 = strtolower(trim((string)($args[0] ?? '')));
+        if ($arg0 !== '' && $arg0 !== 'week' && $arg0 !== 'month' && $arg0 !== 'date' && $arg0 !== 'today') {
+            foreach ($accounts as $a) {
+                if (!is_array($a)) continue;
+                $nm = strtolower((string)($a['name'] ?? ''));
+                if ($nm !== '' && $nm === $arg0) {
+                    $key = (string)($a['name'] ?? $a['user_id'] ?? 'ACC');
+                    return [$a, $key];
+                }
+            }
         }
 
-        // Fallback: scan runtime export for orders CSV/JSON if you have it (basic)
-        // You can later replace this with your own "sales module" function.
+        // Match by chat id
+        foreach ($accounts as $a) {
+            if (!is_array($a)) continue;
+            $cid = (string)($a['telegram_chat_id'] ?? '');
+            if ($cid !== '' && $cid === (string)$chatId) {
+                $key = (string)($a['name'] ?? $a['user_id'] ?? 'ACC');
+                return [$a, $key];
+            }
+        }
+
+        // Fallback: prefer MAIN
+        foreach ($accounts as $a) {
+            if (!is_array($a)) continue;
+            $nm = (string)($a['name'] ?? '');
+            if (strtolower($nm) === 'main') {
+                $key = (string)($a['name'] ?? $a['user_id'] ?? 'ACC');
+                return [$a, $key];
+            }
+        }
+
+        // Last resort
+        if (count($accounts) > 0 && is_array($accounts[0])) {
+            $a = $accounts[0];
+            $key = (string)($a['name'] ?? $a['user_id'] ?? 'ACC');
+            return [$a, $key];
+        }
+
+        return [['name'=>'ACC'], 'ACC'];
+    }
+}
+
+if (!function_exists('tgcmd_sales_find_latest_json_for_day')) {
+    function tgcmd_sales_find_latest_json_for_day(string $exportDir, int $userId, string $dateYmd): ?string {
+        // sales_{userId}_YYYYMMDD_HHMMSS.json -> pick latest for given YYYYMMDD
+        $ymdCompact = str_replace('-', '', $dateYmd); // YYYYMMDD
+        $pat = $exportDir . DIRECTORY_SEPARATOR . "sales_{$userId}_{$ymdCompact}_*.json";
+        $files = glob($pat);
+        if (!is_array($files) || count($files) === 0) return null;
+
+        usort($files, function($a, $b) { return strcmp($b, $a); }); // filename has timestamp, desc is ok
+        return $files[0] ?? null;
+    }
+}
+
+
+if (!function_exists('tgcmd_sales_find_machines')) {
+    function tgcmd_sales_find_machines($j) {
+        if (!is_array($j)) return null;
+
+        // direct keys (preferred)
+        foreach (['by_vmc','byVmc','by_vmc_list','byMachine','by_machine','machines','per_machine','items','top'] as $k) {
+            if (isset($j[$k]) && is_array($j[$k])) return $j[$k];
+        }
+
+        // one-level deep search (some JSONs wrap under 'data' / 'result')
+        foreach ($j as $v) {
+            if (is_array($v)) {
+                foreach (['by_vmc','byVmc','by_vmc_list','byMachine','by_machine','machines','per_machine','items','top'] as $k) {
+                    if (isset($v[$k]) && is_array($v[$k])) return $v[$k];
+                }
+            }
+        }
+
+        // heuristic: find associative map vmc=>{amount,count}
+        foreach ($j as $k => $v) {
+            if (!is_array($v)) continue;
+            // check if looks like vmc map
+            $ok = 0; $checked = 0;
+            foreach ($v as $kk => $vv) {
+                if (!is_array($vv)) continue;
+                $checked++;
+                $hasAmt = (isset($vv['amount']) || isset($vv['sum']) || isset($vv['total']));
+                $hasCnt = (isset($vv['count']) || isset($vv['cnt']) || isset($vv['num']));
+                if ($hasAmt || $hasCnt) $ok++;
+                if ($checked >= 5) break;
+            }
+            if ($checked > 0 && $ok > 0) return $v;
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('tgcmd_sales_parse_json')) {
+    function tgcmd_sales_parse_json(string $file): array {
+        $raw = @file_get_contents($file);
+        if ($raw === false || $raw === '') return ['ok'=>false, 'error'=>'read_failed'];
+        $j = json_decode($raw, true);
+        if (!is_array($j)) return ['ok'=>false, 'error'=>'json_decode_failed'];
+
+        // totals
+        $total = null;
+        foreach (['total','total_tl','sum','amount','total_amount','totalToday','total_today'] as $k) {
+            if (isset($j[$k])) { $total = (float)$j[$k]; break; }
+        }
+        if ($total === null && isset($j['stats']['total'])) $total = (float)$j['stats']['total'];
+
+        $count = null;
+        foreach (['count','cnt','total_count','countToday','count_today'] as $k) {
+            if (isset($j[$k])) { $count = (int)$j[$k]; break; }
+        }
+        if ($count === null && isset($j['stats']['count'])) $count = (int)$j['stats']['count'];
+
+        // machine breakdown
+        $machines = tgcmd_sales_find_machines($j);
+
+
+
+        return ['ok'=>true, 'total'=>$total ?? 0.0, 'count'=>$count ?? 0, 'machines'=>$machines, 'raw'=>$j];
+    }
+}
+
+
+if (!function_exists('tgcmd_sales_merge_machine_totals')) {
+    function tgcmd_sales_merge_machine_totals(array &$agg, $machines, int $userId): void {
+        if (!is_array($machines)) return;
+
+        // normalize common shapes
+        // A) list of rows: [['vmc'=>'81957','sum'=>830,'cnt'=>10,'loc'=>'...'], ...]
+        // B) map: '81957' => ['sum'=>..., 'cnt'=>..., 'loc'=>...]
+        foreach ($machines as $k => $v) {
+            $vmc = '';
+            $sum = 0.0;
+            $cnt = 0;
+            $loc = '';
+
+            if (is_array($v)) {
+                if (isset($v['vmc'])) $vmc = (string)$v['vmc'];
+                else if (isset($v['vmcNo'])) $vmc = (string)$v['vmcNo'];
+                else if (isset($v['vmc_no'])) $vmc = (string)$v['vmc_no'];
+                else if (is_string($k) && preg_match('~^\d{4,}$~', $k)) $vmc = $k;
+
+                foreach (['sum','total','amount'] as $sk) if (isset($v[$sk])) { $sum = (float)$v[$sk]; break; }
+                foreach (['cnt','count','num'] as $ck) if (isset($v[$ck])) { $cnt = (int)$v[$ck]; break; }
+                foreach (['loc','location','name','address'] as $lk) if (isset($v[$lk])) { $loc = (string)$v[$lk]; break; }
+            } else if (is_numeric($v) && is_string($k)) {
+                $vmc = $k;
+                $sum = (float)$v;
+            }
+
+            if ($vmc === '') continue;
+
+            if (!isset($agg[$vmc])) $agg[$vmc] = ['sum'=>0.0,'cnt'=>0,'loc'=>$loc];
+            $agg[$vmc]['sum'] += $sum;
+            $agg[$vmc]['cnt'] += $cnt;
+            if ($agg[$vmc]['loc'] === '' && $loc !== '') $agg[$vmc]['loc'] = $loc;
+        }
+    }
+}
+
+if (!function_exists('tgcmd_sales_format_top')) {
+    function tgcmd_sales_format_top(array $byMachine, int $topN = 5): array {
+        uasort($byMachine, function($a, $b) {
+            if (($a['sum'] ?? 0) == ($b['sum'] ?? 0)) return (int)($b['cnt'] ?? 0) <=> (int)($a['cnt'] ?? 0);
+            return (float)($b['sum'] ?? 0) <=> (float)($a['sum'] ?? 0);
+        });
+
+        $out = [];
+        $i = 0;
+        foreach ($byMachine as $vmc => $m) {
+            $i++;
+            $loc = (string)($m['loc'] ?? 'Unknown');
+            $sum = (float)($m['sum'] ?? 0);
+            $cnt = (int)($m['cnt'] ?? 0);
+            $out[] = "{$i}) {$vmc} - {$loc} | " . number_format($sum, 2, '.', '') . " TL ({$cnt})";
+            if ($i >= $topN) break;
+        }
+        return $out;
+    }
+}
+
+
+if (!function_exists('tgcmd_sales_load_locations')) {
+    function tgcmd_sales_load_locations(int $userId): array {
+
+        $base = tgcmd_runtime_dir();
+        $file = $base . DIRECTORY_SEPARATOR . 'state'
+              . DIRECTORY_SEPARATOR . "jetinno_locations_{$userId}.json";
+
+        if (!is_file($file)) return [];
+
+        $raw = @file_get_contents($file);
+        if ($raw === false || $raw === '') return [];
+
+        $j = json_decode($raw, true);
+        if (!is_array($j)) return [];
+
+        return (array)($j['map'] ?? []);
+    }
+}
+
+if (!function_exists('tgcmd_sales_summary_from_json_day')) {
+    function tgcmd_sales_summary_from_json_day(array $CFG, array $acc, int $userId, string $accountKey, string $dateYmd): array {
         $base = tgcmd_runtime_dir();
         $exportDir = $base . DIRECTORY_SEPARATOR . 'export';
-        if ($dateYmd === '') $dateYmd = date('Y-m-d');
 
-        return "SALES: нет подключенной функции подсчёта в сборке.\nДата: {$dateYmd}\n(Добавьте build_sales_summary_text())";
+        $file = tgcmd_sales_find_latest_json_for_day($exportDir, (int)$userId, (string)$dateYmd);
+        if ($file === null) return ['ok'=>false, 'error'=>'no_sales_json_for_day'];
+
+        $parsed = tgcmd_sales_parse_json($file);
+        if (!($parsed['ok'] ?? false)) return ['ok'=>false, 'error'=>'parse_failed'];
+
+        $byMachine = [];
+        tgcmd_sales_merge_machine_totals($byMachine, $parsed['machines'] ?? null, (int)$userId);
+
+        
+        
+            $locMap = tgcmd_sales_load_locations((int)$userId);
+            foreach ($byMachine as $vmc => &$m) {
+                if (isset($locMap[$vmc])) $m['loc'] = $locMap[$vmc];
+            }
+            unset($m);
+$locMap = tgcmd_sales_load_locations((int)$userId);
+        foreach ($byMachine as $vmc => &$m) {
+            if (isset($locMap[$vmc])) $m['loc'] = $locMap[$vmc];
+        }
+        unset($m);
+$accName = (string)($acc['name'] ?? $accountKey);
+        $lines = [];
+        $lines[] = "💰 SALES UPDATE | {$accName}";
+        $lines[] = "Today: {$dateYmd}";
+        $lines[] = "Total: " . number_format((float)($parsed['total'] ?? 0), 2, '.', '') . " TL (" . (int)($parsed['count'] ?? 0) . ")";
+        $lines[] = "Top:";
+
+        $topLines = tgcmd_sales_format_top($byMachine, 5);
+        
+        if (function_exists('xhe_log')) xhe_log('tgcmd', 'SALES JSON machines=' . count($byMachine), 'DEBUG');
+if (count($topLines) > 0) $lines = array_merge($lines, $topLines);
+        else $lines[] = "— top not available —";
+
+        return ['ok'=>true, 'text'=>implode("\n", $lines)];
     }
+}
+
+if (!function_exists('tgcmd_sales_summary_from_json_range')) {
+    function tgcmd_sales_summary_from_json_range(array $CFG, array $acc, int $userId, string $accountKey, string $fromYmd, string $toYmd, string $title): array {
+        $base = tgcmd_runtime_dir();
+        $exportDir = $base . DIRECTORY_SEPARATOR . 'export';
+
+        $fromTs = strtotime($fromYmd);
+        $toTs   = strtotime($toYmd);
+        if ($fromTs === false || $toTs === false) return ['ok'=>false, 'error'=>'bad_date'];
+        if ($toTs < $fromTs) { $tmp = $fromTs; $fromTs = $toTs; $toTs = $tmp; }
+
+        $totalSum = 0.0;
+        $totalCnt = 0;
+        $byMachine = [];
+        $days = 0;
+
+        for ($ts = $fromTs; $ts <= $toTs; $ts += 86400) {
+            $d = date('Y-m-d', $ts);
+            $file = tgcmd_sales_find_latest_json_for_day($exportDir, $userId, $d);
+            if ($file === null) continue;
+
+            $parsed = tgcmd_sales_parse_json($file);
+            if (!($parsed['ok'] ?? false)) continue;
+
+            $totalSum += (float)($parsed['total'] ?? 0);
+            $totalCnt += (int)($parsed['count'] ?? 0);
+            tgcmd_sales_merge_machine_totals($byMachine, $parsed['machines'] ?? null, $userId);
+            $days++;
+        }
+
+        $accName = (string)($acc['name'] ?? $accountKey);
+        $lines = [];
+        $lines[] = "💰 SALES {$title} | {$accName}";
+        $lines[] = "Range: {$fromYmd} - {$toYmd}";
+        $lines[] = "Total: " . number_format($totalSum, 2, '.', '') . " TL ({$totalCnt})";
+        $lines[] = "Days: {$days}";
+        $lines[] = "Top:";
+
+        $topLines = tgcmd_sales_format_top($byMachine, 7);
+        if (count($topLines) > 0) $lines = array_merge($lines, $topLines);
+        else $lines[] = "— top not available —";
+
+        return ['ok'=>true, 'text'=>implode("\n", $lines)];
+    }
+}
+
+if (!function_exists('tgcmd_sales_today_summary')) {
+    
+function tgcmd_sales_today_summary(array $CFG, string $chatId, array $args): string {
+    // /sales: read only from sales_top_<user_id>.json produced by sales_syrups.php
+    [$acc, $accountKey] = tgcmd_sales_resolve_account($CFG, $chatId, $args);
+    $userId  = (int)($acc['user_id'] ?? 0);
+    $accName = (string)($acc['name'] ?? $accountKey);
+
+    if ($userId <= 0) {
+        return "SALES: account {$accName} missing user_id ❌";
+    }
+
+    // Export dir detection
+    $exportDir = 'C:\\jetinno_runtime\\export';
+    if (function_exists('runtime_export_dir')) {
+        $exportDir = rtrim(runtime_export_dir(), "/\\");
+    } elseif (function_exists('runtime_base_dir')) {
+        $exportDir = rtrim(runtime_base_dir(), "/\\") . DIRECTORY_SEPARATOR . 'export';
+    }
+
+    $file = $exportDir . DIRECTORY_SEPARATOR . "sales_top_{$userId}.json";
+    if (!is_file($file)) {
+        tgcmd_log("SALES_TOP not found file={$file}", "tgcmd");
+        return "SALES: no snapshot yet for {$accName} ({$userId})";
+    }
+
+    $raw = @file_get_contents($file);
+    $j = json_decode((string)$raw, true);
+    if (!is_array($j)) {
+        tgcmd_log("SALES_TOP decode failed file={$file}", "tgcmd");
+        return "SALES: failed to read snapshot for {$accName} ({$userId})";
+    }
+
+    $daterange = (string)($j['daterange'] ?? '');
+    $updatedAt = (string)($j['updated_at'] ?? '');
+
+    $total = (float)($j['total_amount'] ?? 0);
+    $count = (int)($j['total_count'] ?? 0);
+
+    $out  = "📊 SALES UPDATE | {$accName}\n";
+    if ($daterange !== '') $out .= "Date: {$daterange}\n";
+    if ($updatedAt !== '') $out .= "Updated: {$updatedAt}\n";
+    $out .= "Total: " . number_format($total, 2, '.', '') . " TL ({$count})\n\n";
+    $out .= "🏆 TOP 5 MACHINES:\n";
+
+    $top = $j['top5'] ?? [];
+    if (is_array($top) && count($top) > 0) {
+        foreach ($top as $i => $row) {
+            $rank = $i + 1;
+            $vmc  = preg_replace('~\D+~', '', (string)($row['vmc'] ?? ''));
+            if ($vmc === '') continue;
+            $addr = (string)($row['address'] ?? '');
+            $amt  = (float)($row['amount'] ?? 0);
+            $cnt  = (int)($row['count'] ?? 0);
+            if ($addr === '') $addr = '-';
+            $out .= "{$rank}. {$vmc} - {$addr} | " . number_format($amt, 2, '.', '') . " TL ({$cnt})\n";
+        }
+    } else {
+        $out .= "No sales today\n";
+    }
+
+    return $out;
+}
+
 }
 
 if (!function_exists('tgcmd_handle_command')) {
@@ -282,8 +645,8 @@ if ($cmd === '/make') {
             $date = '';
             if (($args[0] ?? '') === 'date' && isset($args[1])) $date = (string)$args[1];
 
-            $txt = tgcmd_sales_today_summary($date);
-            tgcmd_send_message($CFG, $chatId, $txt);
+            $txt = tgcmd_sales_today_summary($CFG, $chatId, $args);
+tgcmd_send_message($CFG, $chatId, $txt);
             return;
         }
 

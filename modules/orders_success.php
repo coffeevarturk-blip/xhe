@@ -112,6 +112,7 @@ $colProd    = $find_col_ci($header, ['product name','product','ürün adı','uru
         $colPrice   = $find_col_ci($header, ['price','amount','tutar','fiyat','ürün fiyatı','urun fiyati','金额']);
         $colTime    = $find_col_ci($header, ['time','create time','created','oluşma','olusturma','sipariş zamanı','siparis zamani','satın alma zamanı','satin alma zamani','order time','时间','更新时间']);
 
+        $colPay    = $find_col_ci($header, ['pay type','paytype','payment','payment type','ödeme','odeme','ödeme tipi','odeme tipi','pay','支付方式','支付类型']);
         if ($colOrderNo === null || $colVmcNo === null) {
             xhe_log('orders_ok', "CSV BAD HEADER datemonth={$datemonth} page={$page} (missing order/vmc cols) header=" . json_encode($header, JSON_UNESCAPED_UNICODE), "WARNING");
             break;
@@ -169,6 +170,7 @@ $colProd    = $find_col_ci($header, ['product name','product','ürün adı','uru
                 'product'  => $prod,
                 'price'    => $priceVal,
                 'time'     => ($tStr !== '' ? $tStr : null),
+                            'pay_type' => ($colPay !== null ? safe_s((string)($r[$colPay] ?? '')) : ''),
             ];
 
             // Dedup notify
@@ -186,9 +188,15 @@ $colProd    = $find_col_ci($header, ['product name','product','ürün adı','uru
             $loc = get_location((int)$userId, (string)$vmcNo);
             if ($loc === '') $loc = 'Unknown';
 
+
+            $payType = '';
+            if ($colPay !== null) $payType = safe_s((string)($r[$colPay] ?? ''));
+            if ($payType === '') $payType = 'Unknown';
             $msg = "✅ NEW SALE | {$accName}\n".
                    "VMC: {$vmcNo} - {$loc}\n".
                    ($prod !== '' ? "{$prod}\n" : "").
+                                      "Pay: {$payType}
+".
                    "Price: " . number_format($priceVal, 2, '.', '') . " TL\n".
                    "Time: " . ($tStr !== '' ? $tStr : date('Y-m-d H:i:s'));
 
@@ -222,7 +230,7 @@ $jsonPath = $outDir . "\\orders_success_{$userId}_{$stamp}.json";
     'account' => $accName,
     'user_id' => $userId,
     'generated_at' => date('c'),
-    'source' => 'orders_csv_isOK1_export_1_last24h_paid',
+    'source' => 'orders_csv_isOK1_export_1_last24h_paid_with_pay_type',
     'daterange' => $daterange,
     'window_start_ts' => $startTs,
     'window_end_ts' => $nowTs,

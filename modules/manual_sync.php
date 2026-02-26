@@ -10,9 +10,13 @@ function manual_sync_process_queue(array $acc, string $accountKey, int $userId, 
     if (!is_array($notifyState)) $notifyState = [];
 
     // ---- XHE objects ----
-    global $browser, $image, $span;
+    global $browser, $image, $span, $input, $btn;
 
     if (!isset($browser) || !is_object($browser)) return;
+
+    if (!isset($image) || !is_object($image)) return;
+    if (!isset($input) || !is_object($input)) return;
+    if (!isset($btn) || !is_object($btn)) return;
 
     // ---- queue path ----
     $base = function_exists('runtime_base_dir') ? rtrim(runtime_base_dir(), "\\/") : 'c:\\jetinno_runtime';
