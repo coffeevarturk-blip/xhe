@@ -1,4 +1,62 @@
 <?php
+
+/**
+ * Extract ERROR/WARNING code from a message text.
+ * Returns ['kind' => 'ERROR'|'WARNING', 'code' => int] or null.
+ */
+function tg_extract_code(string $text): ?array {
+    // Accept codes like 7300, Z0050, 3B80, A1B2, etc.
+    // We extract the token immediately following "ERROR:" or "WARNING:" (case-insensitive).
+    // Token: letters/digits, may include internal letters (e.g. 3B80) and optional leading letters.
+    if (preg_match('/\b(ERROR|WARNING)\s*:\s*([A-Z0-9]+)\b/i', $text, $m)) {
+        return ['kind' => strtoupper($m[1]), 'code' => strtoupper($m[2])];
+    }
+    if (preg_match('/\bCode\s*:\s*(ERROR|WARNING)\s*:\s*([A-Z0-9]+)\b/i', $text, $m)) {
+        return ['kind' => strtoupper($m[1]), 'code' => strtoupper($m[2])];
+    }
+    return null;
+}
+
+/**
+ * Decide whether a given code should be filtered (i.e. NOT sent) according to config.
+ * $cfgNotify - $CFG['notify'] or equivalent
+ * $effectiveType - 'errors' or 'warnings'
+ * $info - result of tg_extract_code or null
+ * Returns true if message SHOULD be filtered (i.e. not sent).
+ */
+function tg_is_code_filtered(array $cfgNotify, string $effectiveType, ?array $info): bool {
+    if (!$info) return false;
+    if ($effectiveType !== 'errors' && $effectiveType !== 'warnings') return false;
+
+    $filters = $cfgNotify['filters'] ?? [];
+    $f = $filters[$effectiveType] ?? null;
+    if (!is_array($f) || empty($f)) return false;
+
+    $mode = strtolower((string)($f['mode'] ?? 'deny')); // deny = blacklist, allow = whitelist
+    $codes = $f['codes'] ?? [];
+    if (!is_array($codes)) $codes = [];
+
+    $needle = strtoupper((string)($info['code'] ?? ''));
+    if ($needle === '') return false;
+
+    // Normalize list items to uppercase strings
+    $list = [];
+    foreach ($codes as $v) {
+        $v = strtoupper(trim((string)$v));
+        if ($v !== '') $list[] = $v;
+    }
+
+    $inList = in_array($needle, $list, true);
+
+    if ($mode === 'allow') {
+        // allow list: if code not in list => filter it out (do not send)
+        return !$inList;
+    }
+    // deny list: if code in list => filter it out (do not send)
+    return $inList;
+}
+
+
 // functions.php
 
 // -------------------- CONFIG LOADER --------------------
@@ -344,7 +402,33 @@ if (!function_exists('tg_notify')) {
             ) {
                 $effectiveType = 'warnings';
             }
+        
+        // --- ERROR/WARNING CODE FILTER (added) ---
+        // Attempt to extract numeric error/warning code from message and consult config filters.
+        // Config expected in $CFG['notify']['filters'], e.g.:
+        // 'filters' => ['errors'=>['mode'=>'deny','codes'=>[7300]], 'warnings'=>['mode'=>'deny','codes'=>[5901]]]
+        $cfg = cfg(); // ensure config loaded
+        $cfgNotify = $cfg['notify'] ?? ($cfg['telegram'] ?? []);
+        $codeInfo = null;
+        try {
+            $codeInfo = tg_extract_code($text ?? '');
+        } catch (Throwable $e) {
+            $codeInfo = null;
         }
+        if (tg_is_code_filtered($cfgNotify, $effectiveType ?? '', $codeInfo)) {
+            // filtered by config - do not send this notification
+            $codeStr = 'n/a';
+            if (is_array($codeInfo) && isset($codeInfo['kind']) && isset($codeInfo['code'])) {
+                $codeStr = (string)$codeInfo['kind'] . ':' . (string)$codeInfo['code'];
+            }
+            // keep logs short to avoid entity issues
+            $short = $text ?? '';
+            if (is_string($short) && strlen($short) > 160) $short = substr($short, 0, 160) . '...';
+            log_info('tg', "FILTERED notify type={$effectiveType} key={$key} code={$codeStr} text=" . str_replace(PHP_EOL, ' ', (string)$short));
+            return;
+        }
+        // --- end filter ---
+}
 
         // если не указан chatId — fallback на общий
         if ($chatId === null) {

@@ -23,3 +23,22 @@ if (!isset($CFG['modules']) || !is_array($CFG['modules'])) {
 }
 
 return $CFG;
+
+
+// -------------------- ERROR / WARNING DENY FILTERS --------------------
+$CFG['notify']['filters'] = [
+    'errors' => [
+        'mode'  => 'deny',
+        'codes' => [
+            '7300',    // example numeric error
+        ],
+    ],
+    'warnings' => [
+        'mode'  => 'deny',
+        'codes' => [
+            'Z0050',   // MDB Cihazı Çevrimdışı
+            '3B80',    // example alphanumeric warning
+        ],
+    ],
+];
+

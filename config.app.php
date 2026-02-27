@@ -211,3 +211,26 @@ return [
         'debug_orders' => 'c:\\debug_order_page.html',
     ],
 ];
+
+
+/*
+|--------------------------------------------------------------------------
+| ERROR / WARNING DENY FILTERS
+|--------------------------------------------------------------------------
+| mode:
+|   'deny'  = do NOT send listed codes (blacklist)
+|   'allow' = send ONLY listed codes (whitelist)
+|
+| Example below blocks ERROR:7300 and WARNING:5901
+*/
+$CFG['notify']['filters'] = [
+    'errors' => [
+        'mode'  => 'deny',
+        'codes' => [7300],   // add more error codes if needed
+    ],
+    'warnings' => [
+        'mode'  => 'deny',
+        'codes' => [Z0050],   // add more warning codes if needed
+    ],
+];
+
