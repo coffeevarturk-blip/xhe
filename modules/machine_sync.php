@@ -35,7 +35,7 @@ if ($staleAfterSec <= 0) {
 }
 $cooldownSec = (int)($CFG['sync']['cooldown_sec'] ?? $defaultCooldownSec);
 // ---- HARD LIMIT: do not sync same machine more than once per 24h ----
-$hardMinRepeatSec = (int)($CFG['sync']['hard_min_repeat_sec'] ?? 86400); // 24 hours
+$hardMinRepeatSec = (int)($CFG['sync']['hard_min_repeat_sec'] ?? 0); // daily scheduler controls cadence; keep 0 unless you explicitly need extra protection
 
 
 // Optional global master switch (if present)
@@ -83,6 +83,47 @@ if (!is_array($machines) || count($machines) === 0) {
     if (function_exists('xhe_log')) xhe_log('sync', "No machines in sync_state file={$syncStateFile}", 'DEBUG');
     return;
 }
+
+
+// ---- DAILY SCHEDULER (Istanbul): run once per day at 05:00, sync only stale (>6h) machines ----
+// This module is called inside the main AIO loop; scheduler makes it effectively "cron-like".
+$tzName         = (string)($CFG['sync']['timezone'] ?? 'Europe/Istanbul');
+$dailyHour      = (int)($CFG['sync']['daily_hour'] ?? 5);        // 5 AM
+$dailyWindowMin = (int)($CFG['sync']['daily_window_min'] ?? 60); // 05:00-05:59 window
+
+try { $tz = new DateTimeZone($tzName); } catch (Exception $e) { $tz = new DateTimeZone('Europe/Istanbul'); }
+$nowTs = time();
+$dtNow = new DateTime('@' . $nowTs);
+$dtNow->setTimezone($tz);
+
+$today    = $dtNow->format('Y-m-d');
+$minOfDay = ((int)$dtNow->format('G')) * 60 + (int)$dtNow->format('i');
+$startMin = $dailyHour * 60;
+$endMin   = $startMin + max(1, $dailyWindowMin);
+
+$dailyStateFile = runtime_base_dir() . "\\state\\jetinno_sync_daily_{$userId}.json";
+$dailyState = [];
+if (is_file($dailyStateFile)) {
+    $tmpDaily = json_decode((string)@file_get_contents($dailyStateFile), true);
+    if (is_array($tmpDaily)) $dailyState = $tmpDaily;
+}
+$lastRunDate = (string)($dailyState['last_run_date'] ?? '');
+
+if ($minOfDay < $startMin || $minOfDay >= $endMin) {
+    if (function_exists('xhe_log')) xhe_log('sync', 'SKIP daily window now=' . $dtNow->format('H:i') . ' tz=' . $tz->getName() . ' window=' . sprintf('%02d:00..%02d:%02d', $dailyHour, intdiv($endMin, 60), $endMin % 60), 'DEBUG');
+    return;
+}
+if ($lastRunDate === $today) {
+    if (function_exists('xhe_log')) xhe_log('sync', 'SKIP daily already ran today=' . $today, 'DEBUG');
+    return;
+}
+
+// Mark as ran today (prevents re-run if main loop repeats inside the window)
+$dailyState['last_run_date'] = $today;
+$dailyState['last_run_ts']   = $nowTs;
+@file_put_contents($dailyStateFile, json_encode($dailyState, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+if (function_exists('xhe_log')) xhe_log('sync', 'DAILY RUN START date=' . $today . ' time=' . $dtNow->format('H:i') . ' tz=' . $tz->getName(), 'INFO');
 
 // ---- helper: parse upload_time to timestamp ----
 $parseUploadTs = function(string $s): int {

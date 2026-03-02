@@ -1,96 +1,116 @@
 <?php
-// modules/manual_sync.php
-// Manual SYNC via queue (created by request_machine_sync())
-// Минимально изменённая версия machine_sync.php
 
-if (!function_exists('manual_sync_process_queue')) {
+if (!isset($CFG['sync']['enabled']) || !$CFG['sync']['enabled']) {
+    return;
+}
 
-function manual_sync_process_queue(array $acc, string $accountKey, int $userId, string $cookieStr, array &$state, $locations, &$notifyState): void
-{
-    if (!is_array($notifyState)) $notifyState = [];
+$now = time();
 
-    // ---- XHE objects ----
-    global $browser, $image, $span, $input, $btn;
+/* ============================================================
+   DAILY SCHEDULE: 1 RUN PER DAY AT 05:00 (Europe/Istanbul)
+   ============================================================ */
 
-    if (!isset($browser) || !is_object($browser)) return;
+$dailyHour      = 5;
+$dailyWindowMin = 60;
+$tzName         = 'Europe/Istanbul';
 
-    if (!isset($image) || !is_object($image)) return;
-    if (!isset($input) || !is_object($input)) return;
-    if (!isset($btn) || !is_object($btn)) return;
+$tz = new DateTimeZone($tzName);
+$dt = new DateTime('@' . $now);
+$dt->setTimezone($tz);
 
-    // ---- queue path ----
-    $base = function_exists('runtime_base_dir') ? rtrim(runtime_base_dir(), "\\/") : 'c:\\jetinno_runtime';
-    $stateDir = $base . DIRECTORY_SEPARATOR . 'state';
-    $queuePath = $stateDir . DIRECTORY_SEPARATOR . 'queue_sync.json';
+$today = $dt->format('Y-m-d');
+$currentMin = ((int)$dt->format('G')) * 60 + (int)$dt->format('i');
 
-    if (!is_file($queuePath)) return;
+$startMin = $dailyHour * 60;
+$endMin   = $startMin + $dailyWindowMin;
 
-    $queue = json_decode((string)file_get_contents($queuePath), true);
-    if (!is_array($queue) || !$queue) return;
+$stateFile = runtime_base_dir() . '/state/jetinno_sync_state_' . $CFG['account']['user_id'] . '.json';
+$state = [];
 
-    // Берём 1 задачу
-    $task = array_shift($queue);
-    file_put_contents($queuePath, json_encode($queue, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+if (file_exists($stateFile)) {
+    $state = json_decode(file_get_contents($stateFile), true) ?: [];
+}
 
-    $vmc = preg_replace('~\D+~', '', (string)($task['vmc'] ?? ''));
-    if ($vmc === '') return;
+if (!isset($state['daily'])) {
+    $state['daily'] = [];
+}
 
-    // ---- cooldown 7 минут ----
-    if (!isset($state['sync_global'])) $state['sync_global'] = [];
-    if (!isset($state['sync_global']['manual'])) $state['sync_global']['manual'] = [];
+$lastRunDate = $state['daily']['last_run_date'] ?? null;
 
-    $lastTs = (int)($state['sync_global']['manual'][$vmc]['ts'] ?? 0);
-    if ($lastTs > 0 && (time() - $lastTs) < 420) {
-        if (function_exists('xhe_log')) xhe_log('sync', "SKIP manual cooldown vmc={$vmc}", 'INFO');
-        return;
-    }
+// вне окна
+if ($currentMin < $startMin || $currentMin >= $endMin) {
+    return;
+}
 
-    // ---- прямой URL машины ----
-    $machineUrl = "https://saas-hk.jetinno.com/device_info?vmc_no={$vmc}&admin=";
+// уже запускали сегодня
+if ($lastRunDate === $today) {
+    return;
+}
 
-    if (function_exists('xhe_log')) xhe_log('sync', "MANUAL sync vmc={$vmc} url={$machineUrl}", 'INFO');
+// отмечаем запуск
+$state['daily']['last_run_date'] = $today;
+$state['daily']['last_run_ts']   = $now;
 
-$confirmSpanNumber  = 344; // если у вас используется confirm
-$machineInputNumber = 40;  // ВАЖНО: возьмите значения из machine_sync.php
-$syncBtnNumber      = 55;  // ВАЖНО: возьмите значения из machine_sync.php
+/* ============================================================
+   STALE CHECK (6 HOURS)
+   ============================================================ */
 
-    $browser->close_all_tabs();
-    $browser->navigate($machineUrl);
-    $browser->wait(5);
+$staleAfterSec = 6 * 3600;
+$staleMachines = [];
 
-    // ---- control ----
-    $image->click_by_src("https://saas-hk.jetinno.com/home/images/control.png", false);
-    $browser->wait(4);
+if (!isset($state['machines'])) {
+    $state['machines'] = [];
+}
 
-    // ---- sync icon (как в machine_sync.php) ----
-    $image->click_by_src("https://saas-hk.jetinno.com/home/images/sync.png", false);
-    $browser->wait(3);
+foreach ($state['machines'] as $vmc => $mState) {
 
-$input->click_by_number($machineInputNumber);
-    $input->set_value_by_number($machineInputNumber, $vmc);
-    $browser->wait(1);
+    $uploadTimeStr = $mState['upload_time'] ?? null;
+    if (!$uploadTimeStr) continue;
 
-    $btn->set_focus_by_number($syncBtnNumber);
-    $btn->click_by_number($syncBtnNumber);
-    $browser->wait(3);
+    $uploadTs = strtotime($uploadTimeStr);
+    if (!$uploadTs) continue;
 
-    // ---- state ----
-    $state['sync_global']['manual'][$vmc] = [
-        'ts'  => time(),
-        'acc' => $accountKey,
-    ];
-
-    // ---- Telegram ----
-    $notifySync = function_exists('isTelegramNotifyEnabled')
-        ? isTelegramNotifyEnabled($acc, 'sync')
-        : true;
-
-    $chatId = $acc['telegram_chat_id'] ?? ($GLOBALS['CFG']['telegram']['chat_id'] ?? null);
-
-    if ($notifySync && $chatId && function_exists('tg_notify')) {
-        $msg = "🔄 MANUAL SYNC\nVMC: {$vmc}\nAccount: {$accountKey}\nTime: " . date('Y-m-d H:i:s');
-        tg_notify('sync', $msg, (string)$chatId, $accountKey . '|manual_sync|' . $vmc, $notifyState);
+    if (($now - $uploadTs) > $staleAfterSec) {
+        $staleMachines[] = $vmc;
     }
 }
 
+if (count($staleMachines) === 0) {
+    file_put_contents($stateFile, json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+    return;
 }
+
+/* ============================================================
+   TELEGRAM SUMMARY (ONE MESSAGE)
+   ============================================================ */
+
+$timeStr = $dt->format('H:i');
+$accName = $CFG['account']['name'] ?? 'MAIN';
+
+$msg = "🔄 DAILY SYNC RUN | {$accName}\n";
+$msg .= "Stale machines: " . count($staleMachines) . "\n";
+$msg .= "Time: {$timeStr}";
+
+if (!empty($CFG['telegram']['notify_sync'])) {
+    tg_notify('sync', $msg, $CFG['telegram']['chat_id'], 'daily_sync_' . $today, $notifyState);
+}
+
+/* ============================================================
+   RUN SYNC FOR STALE MACHINES
+   ============================================================ */
+
+foreach ($staleMachines as $vmc) {
+
+    xhe_log('sync', "DAILY SYNC vmc={$vmc}", 'INFO');
+
+    // ваш существующий код UI синхронизации:
+    run_machine_sync($browser, $image, $input, $btn, $vmc);
+
+    $state['machines'][$vmc]['last_sync'] = date('Y-m-d H:i:s', $now);
+}
+
+/* ============================================================
+   SAVE STATE
+   ============================================================ */
+
+file_put_contents($stateFile, json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));

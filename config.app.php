@@ -172,7 +172,7 @@ return [
         'sales' => true,
         'supply' => true,
         'errors' => true,
-        'reboot' => true,
+        'reboot' => false,
         'orders' => true,
         'heartbeat' => true,
       ],
