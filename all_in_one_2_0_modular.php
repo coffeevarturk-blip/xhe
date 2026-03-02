@@ -226,6 +226,8 @@ try {
 //require __DIR__ . '/test_manual_sync_81941.php';
 //exit;
 // ---- MODULES ----
+   require_once __DIR__ . '/modules/device_status_runner.php';
+      device_status_run_tr('MAIN', 629, $CFG);
 require_once __DIR__ . '/modules/state.php';
 require_once __DIR__ . '/modules/sales_summary.php';
 require_once __DIR__ . '/modules/sales_process.php';

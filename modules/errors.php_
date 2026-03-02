@@ -3,63 +3,6 @@
 // AUTO-GENERATED MODULE from all_in_one_2_0_refactored.php
 // DO NOT EDIT LOGIC HERE unless you know what you're doing.
 
-
-// ========== NOTIFY FILTERS (deny/allow by code) ==========
-if (!function_exists('normalize_notify_code')) {
-    function normalize_notify_code(string $code): string {
-        $code = trim($code);
-        if ($code === '') return '';
-        // If code looks like "WARNING:Z0050" or "ERROR:7300", take suffix after last ":"
-        if (strpos($code, ':') !== false) {
-            $parts = explode(':', $code);
-            $code = trim(end($parts));
-        }
-        return strtoupper($code);
-    }
-}
-
-if (!function_exists('detect_notify_kind')) {
-    function detect_notify_kind(string $rawCode, string $type): string {
-        $c = strtoupper(trim($rawCode));
-        if (strpos($c, 'WARNING:') === 0) return 'warnings';
-        if (strpos($c, 'ERROR:') === 0) return 'errors';
-        // fallback: try from type text
-        $t = strtoupper(trim($type));
-        if (strpos($t, 'UYARI') !== false || strpos($t, 'WARNING') !== false) return 'warnings';
-        if (strpos($t, 'ERROR') !== false || strpos($t, 'HATA') !== false) return 'errors';
-        return 'errors';
-    }
-}
-
-if (!function_exists('should_skip_notify_code')) {
-    function should_skip_notify_code(string $kind, string $rawCode, array $CFG): bool {
-        $filters = $CFG['notify']['filters'] ?? null;
-        if (!is_array($filters)) return false;
-
-        $rule = $filters[$kind] ?? null;
-        if (!is_array($rule)) return false;
-
-        $mode = strtolower((string)($rule['mode'] ?? 'deny'));
-        $codes = $rule['codes'] ?? [];
-        if (!is_array($codes)) $codes = [];
-
-        // normalize codes list to uppercase strings
-        $set = [];
-        foreach ($codes as $v) {
-            $set[strtoupper(trim((string)$v))] = true;
-        }
-
-        $code = normalize_notify_code($rawCode);
-        if ($code === '') return false;
-
-        $in = isset($set[$code]);
-
-        if ($mode === 'allow') return !$in; // skip if not allowed
-        // default deny
-        return $in; // skip if denied
-    }
-}
-
 // ========== 1) ERRORS ==========
         $perPageErr = 200;
         $maxPagesErr = 200;
@@ -111,13 +54,6 @@ if (!function_exists('should_skip_notify_code')) {
             $type  = safe_s((string)($row[err_col_type()] ?? ''));
             $st    = safe_s((string)($row[err_col_status()] ?? ''));
             $dt    = safe_s((string)($row[err_col_time()] ?? ''));
-
-            // Apply deny/allow filters by code (from $CFG['notify']['filters'])
-            $kind = detect_notify_kind($code, $type); // 'errors' or 'warnings'
-            if (should_skip_notify_code($kind, $code, $CFG)) {
-                xhe_log('errors', "SKIP by filter account={$accName} vmc={$vmc} code={$code}", "DEBUG");
-                continue;
-            }
             $seri  = safe_s((string)($row[err_col_serial()] ?? ''));
 
             if ($vmc === '') $vmc = 'UNKNOWN';
