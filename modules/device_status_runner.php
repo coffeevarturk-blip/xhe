@@ -116,6 +116,45 @@ if (!function_exists('ds_parse_conn_tr')) {
     }
 }
 
+if (!function_exists('ds_pick_device_status_notify')) {
+    /**
+     * Returns [enabled(bool), chatId(string)] for device_status notifications.
+     * Priority: per-account $CFG['jetinno']['accounts'][...]['telegram_notify']['device_status'] and ['telegram_chat_id']
+     * Fallback: $CFG['telegram']['notify']['device_status_offline'] and $CFG['telegram']['chat_id']
+     */
+    function ds_pick_device_status_notify(string $accName, int $userId, array $CFG): array {
+        $enabled = null;
+        $chatId = null;
+
+        $accs = $CFG['jetinno']['accounts'] ?? ($CFG['accounts'] ?? null);
+        if (is_array($accs)) {
+            foreach ($accs as $a) {
+                $aName = (string)($a['name'] ?? $a['key'] ?? '');
+                $aUid  = (int)($a['user_id'] ?? 0);
+                if (($aUid && $aUid === $userId) || ($aName !== '' && $aName === $accName)) {
+                    $tn = $a['telegram_notify'] ?? null;
+                    if (is_array($tn) && array_key_exists('device_status', $tn)) {
+                        $enabled = (bool)$tn['device_status'];
+                    }
+                    if (!empty($a['telegram_chat_id'])) {
+                        $chatId = (string)$a['telegram_chat_id'];
+                    }
+                    break;
+                }
+            }
+        }
+
+        if ($enabled === null) {
+            $enabled = (bool)($CFG['telegram']['notify']['device_status_offline'] ?? true);
+        }
+        if ($chatId === null) {
+            $chatId = (string)($CFG['telegram']['chat_id'] ?? ($CFG['telegram']['main_chat_id'] ?? ''));
+        }
+
+        return [$enabled, $chatId];
+    }
+}
+
 /**
  * Main entry: download device CSV and notify on ONLINE->OFFLINE.
  * Usage:
@@ -193,10 +232,8 @@ if (!function_exists('device_status_run_tr')) {
 
                 // Notify ONLY ONLINE -> OFFLINE
                 if ((int)$prev === 1 && (int)$conn === 0) {
-                    $enabled = (bool)($CFG['telegram']['notify']['device_status_offline'] ?? true);
-                    $chatId = (string)($CFG['telegram']['chat_id'] ?? ($CFG['telegram']['main_chat_id'] ?? ''));
-
-                    if ($enabled && $chatId !== '' && function_exists('tg_notify')) {
+                    list($enabled, $chatId) = ds_pick_device_status_notify($accName, $userId, $CFG);
+if ($enabled && $chatId !== '' && function_exists('tg_notify')) {
                         $msg = "🔴 MACHINE OFFLINE | {$accName}\n"
                              . "VMC: {$vmc}" . ($loc !== '' ? " - {$loc}" : '') . "\n"
                              . "Time: " . date('Y-m-d H:i:s');

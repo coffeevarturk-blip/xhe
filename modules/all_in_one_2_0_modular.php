@@ -328,7 +328,6 @@ foreach ($accounts as $acc) {
     run_module_file(cfg_module_enabled($CFG, 'sales_syrups', true),  'sales_syrups',  __DIR__ . '/modules/sales_syrups.php');
 
 
-    run_module_file(cfg_module_enabled($CFG, 'cleaning_control', true), 'cleaning_control', __DIR__ . '/modules/cleaning_control.php');
     // Control/maintenance modules (usually always on, but configurable)
     run_module_file(cfg_module_enabled($CFG, 'telegram_commands', true), 'telegram_commands', __DIR__ . '/modules/telegram_commands.php');
     run_module_file(cfg_module_enabled($CFG, 'manual_reboot', true),    'manual_reboot',    __DIR__ . '/modules/manual_reboot.php');

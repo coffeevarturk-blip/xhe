@@ -977,3 +977,56 @@ function get_location(int $userId, string $vmc): string {
 
     return '';
 }
+function download_rinsing_csv(string $userId): ?string
+{
+    // ВАЖНО: cookieStr должен быть после LOGIN OK
+    $cookie = $GLOBALS['cookieStr'] ?? '';
+    if (!$cookie) {
+        log_msg('[rinsing][ERROR] cookieStr is empty (run after LOGIN OK)');
+        return null;
+    }
+
+    $url = "https://saas-hk.jetinno.com/rinsing?"
+         . "user_id=" . urlencode($userId)
+         . "&daterange=&rinsing_code=&type=&is_ok=&vmc_no="
+         . "&perPage=25&order_by%5Bkey%5D=&order_by%5Bvalue%5D="
+         . "&export=1";
+
+    $outDir = runtime_base_dir() . "/export";
+    if (!is_dir($outDir)) @mkdir($outDir, 0777, true);
+
+    $ts = date('Ymd_His');
+    $outPath = $outDir . "/rinsing_{$userId}_{$ts}.csv";
+
+    // простой HTTP GET с cookie
+    $opts = [
+        'http' => [
+            'method' => 'GET',
+            'header' =>
+                "Cookie: {$cookie}\r\n" .
+                "User-Agent: Mozilla/5.0\r\n",
+            'timeout' => 60,
+        ]
+    ];
+
+    $ctx = stream_context_create($opts);
+    $csv = @file_get_contents($url, false, $ctx);
+
+    // логируем HTTP код если получится
+    $httpCode = 0;
+    if (isset($http_response_header) && is_array($http_response_header)) {
+        foreach ($http_response_header as $h) {
+            if (preg_match('~^HTTP/\S+\s+(\d{3})~', $h, $m)) { $httpCode = (int)$m[1]; break; }
+        }
+    }
+
+    if ($csv === false || strlen($csv) < 10) {
+        log_msg("[rinsing][ERROR] DOWNLOAD failed http={$httpCode} url={$url}");
+        return null;
+    }
+
+    file_put_contents($outPath, $csv);
+    log_msg("[rinsing][INFO] SAVED CSV={$outPath} http={$httpCode} bytes=" . strlen($csv));
+
+    return $outPath;
+}

@@ -20,7 +20,7 @@ return [
         'telegram_commands'=> true,
         'manual_reboot'    => true,
         'manual_sync'      => true,
-		'device_status'	=> true,
+        'cleaning_control' => true,
     ],
 'xhe' => [
         'host' => '127.0.0.1:7010',
