@@ -194,8 +194,14 @@ foreach ($targets as $vmcNo => $info) {
     $browser->wait(1);
 
     // reboot button
-    $btn->set_focus_by_number($rebootBtnNumber);
-    $btn->click_by_number($rebootBtnNumber);
+      $btn->set_focus_by_inner_text("Onaylamak", false);
+
+    //  $btn->click_by_inner_text("Onaylamak", false);
+$btn->set_focus_by_inner_html("Onaylamak", false);
+$btn->click_by_inner_html("Onaylamak", false);
+
+//    $btn->set_focus_by_number($rebootBtnNumber);
+//    $btn->click_by_number($rebootBtnNumber);
     $browser->wait(3);
 
     // save global reboot state

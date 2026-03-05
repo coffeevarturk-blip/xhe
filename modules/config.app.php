@@ -167,7 +167,7 @@ return [
   'accounts' => [
     [
       'name' => 'MAIN',
-      'user_id' => 629,
+      'user_id' => 488,
       'telegram_chat_id' => 1602852137,
       'telegram_notify' => [
         'sales' => true,

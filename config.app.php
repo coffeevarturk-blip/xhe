@@ -173,7 +173,7 @@ return [
         'sales' => true,
         'supply' => true,
         'errors' => true,
-        'reboot' => false,
+        'reboot' => true,
         'orders' => true,
         'heartbeat' => true,
         'device_status' => true,

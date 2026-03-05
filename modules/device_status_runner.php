@@ -2,7 +2,7 @@
 // ======================================================
 // modules/device_status_runner.php  (TR columns hardcoded)
 // CSV source: /device?user_id=...&export=1
-// Detect ONLY ONLINE -> OFFLINE transition and notify once.
+// Detect ONLINE <-> OFFLINE transitions and notify on changes.
 // Columns expected (Turkish):
 //  - "Cihaz numarası"  (VMC)
 //  - "Cihaz adresi"    (Location)
@@ -230,33 +230,31 @@ if (!function_exists('device_status_run_tr')) {
             if ((int)$prev !== (int)$conn) {
                 $changed++;
 
-                // Notify ONLY ONLINE -> OFFLINE
-                if ((int)$prev === 1 && (int)$conn === 0) {
-                    list($enabled, $chatId) = ds_pick_device_status_notify($accName, $userId, $CFG);
-if ($enabled && $chatId !== '' && function_exists('tg_notify')) {
-                        $msg = "🔴 MACHINE OFFLINE | {$accName}\n"
-                             . "VMC: {$vmc}" . ($loc !== '' ? " - {$loc}" : '') . "\n"
-                             . "Time: " . date('Y-m-d H:i:s');
+                // Notify on status change (ONLINE <-> OFFLINE)
+                list($enabled, $chatId) = ds_pick_device_status_notify($accName, $userId, $CFG);
+                if ($enabled && $chatId !== '' && function_exists('tg_notify')) {
 
-                        // ensure notifyState exists as VARIABLE (required for by-reference param)
+                    $isOffline = ((int)$conn === 0);
+                    $emoji = $isOffline ? "🔴" : "🟢";
+                    $stateTxt = $isOffline ? "OFFLINE" : "ONLINE";
 
-                        if (!isset($notifyState) || !is_array($notifyState)) {
+                    $msg = "{$emoji} MACHINE {$stateTxt} | {$accName}\n"
+                         . "VMC: {$vmc}" . ($loc !== '' ? " - {$loc}" : '') . "\n"
+                         . "Time: " . date('Y-m-d H:i:s');
 
-                            $notifyState = [];
-
-                        }
-
-                        $notifyState = &$notifyState;
-
-
-                        tg_notify('device_status', $msg, $chatId, "offline|{$vmc}", $notifyState);
-                        $sent++;
-                    } else {
-                        if (function_exists('xhe_log')) xhe_log('device_status', "Skip TG enabled=" . ($enabled?'1':'0') . " chat_id_len=" . strlen($chatId), 'DEBUG');
+                    // ensure notifyState exists as VARIABLE (required for by-reference param)
+                    if (!isset($notifyState) || !is_array($notifyState)) {
+                        $notifyState = [];
                     }
-                }
+                    $notifyState = &$notifyState;
 
-                $machines[$vmc]['last_connected'] = $conn;
+                    $keyPrefix = $isOffline ? "offline" : "online";
+                    tg_notify('device_status', $msg, $chatId, "{$keyPrefix}|{$vmc}", $notifyState);
+                    $sent++;
+                } else {
+                    if (function_exists('xhe_log')) xhe_log('device_status', "Skip TG enabled=" . ($enabled?'1':'0') . " chat_id_len=" . strlen($chatId), 'DEBUG');
+                }
+$machines[$vmc]['last_connected'] = $conn;
                 $machines[$vmc]['last_seen'] = date('Y-m-d H:i:s');
                 if ($loc !== '') $machines[$vmc]['location'] = $loc;
             } else {
