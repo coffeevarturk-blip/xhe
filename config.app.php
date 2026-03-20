@@ -20,7 +20,8 @@ return [
         'telegram_commands'=> true,
         'manual_reboot'    => true,
         'manual_sync'      => true,
-		'device_status'	=> true,
+        'cleaning_control' => true,
+		'device_status' => true,
     ],
 'xhe' => [
         'host' => '127.0.0.1:7010',
@@ -167,32 +168,19 @@ return [
   'accounts' => [
     [
       'name' => 'MAIN',
-      'user_id' => 629,
+      'user_id' => 636,
       'telegram_chat_id' => 1602852137,
       'telegram_notify' => [
         'sales' => true,
         'supply' => true,
         'errors' => true,
         'reboot' => true,
-        'orders' => true,
+        'orders' => false,
         'heartbeat' => true,
         'device_status' => true,
 ],
     ],
-    [
-      'name' => 'sergio',
-      'user_id' => 617,
-      'telegram_chat_id' => -5079392825,
-      'telegram_notify' => [
-        'sales' => false,
-        'supply' => false,
-        'errors' => false,
-        'reboot' => false,
-        'orders' => false,
-        'heartbeat' => false,
-        'device_status' => false,
-],
-    ],
+
   ],
 ],
 

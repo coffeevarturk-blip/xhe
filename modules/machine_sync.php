@@ -7,7 +7,7 @@
 // Notifications are sent ONLY if enabled in config via telegram_notify['sync'] (fallback to 'reboot' for backward compat).
 
 // ---- defaults (can be overridden by $CFG['sync']) ----
-$defaultStaleAfterSec = 6 * 3600; // 6h
+$defaultStaleAfterSec = 24 * 3600; // 6h
 $defaultCooldownSec   = 420;      // 7 min
 
 // ---- ensure state buckets ----

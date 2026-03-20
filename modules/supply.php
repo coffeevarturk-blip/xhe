@@ -1,7 +1,160 @@
+
 <?php
 
 // AUTO-GENERATED MODULE from all_in_one_2_0_refactored.php
 // DO NOT EDIT LOGIC HERE unless you know what you're doing.
+
+if (!function_exists('supply_thresholds_by_id')) {
+    function supply_thresholds_by_id() {
+        return [
+            10009 => ['limit' => 1000, 'label' => 'Кофе',            'state_key' => 'coffee_beans'],
+            11019 => ['limit' => 300,  'label' => 'Клубника',         'state_key' => 'strawberry_syrup'],
+            11018 => ['limit' => 300,  'label' => 'Банан',            'state_key' => 'banana_syrup'],
+            11017 => ['limit' => 300,  'label' => 'Карамель',         'state_key' => 'caramel_syrup'],
+            11001 => ['limit' => 300,  'label' => 'Орех',             'state_key' => 'hazelnut_syrup'],
+            10428 => ['limit' => 1000, 'label' => 'Холодное молоко',  'state_key' => 'cold_milk'],
+            10008 => ['limit' => 1000, 'label' => 'Горячее молоко',   'state_key' => 'hot_milk'],
+            10006 => ['limit' => 1000, 'label' => 'Какао',            'state_key' => 'cocoa'],
+            10003 => ['limit' => 300,  'label' => 'Чай',              'state_key' => 'tea'],
+        ];
+    }
+}
+
+if (!function_exists('supply_rule_by_id')) {
+    function supply_rule_by_id($ingredientId) {
+        $ingredientId = (int)$ingredientId;
+        $thresholds = supply_thresholds_by_id();
+        return $thresholds[$ingredientId] ?? null;
+    }
+}
+
+
+if (!function_exists('supply_rec_key_by_id')) {
+    function supply_rec_key_by_id($ingredientId) {
+        $ingredientId = (int)$ingredientId;
+        $map = [
+            10009 => 'coffee_beans',
+            11019 => 'strawberry_syrup',
+            11018 => 'banana_syrup',
+            11017 => 'caramel_syrup',
+            11001 => 'hazelnut_syrup',
+            10428 => 'cold_milk',
+            10008 => 'hot_milk',
+            10006 => 'cocoa',
+            10003 => 'tea',
+        ];
+        return $map[$ingredientId] ?? null;
+    }
+}
+
+
+if (!function_exists('supply_weekly_state_file')) {
+    function supply_weekly_state_file($userId) {
+        $userId = (int)$userId;
+                $base = rtrim((string)runtime_base_dir(), '\\/');
+        return $base . DIRECTORY_SEPARATOR . 'state' . DIRECTORY_SEPARATOR . "weekly_consumption_{$userId}_state.json";
+    }
+}
+
+if (!function_exists('supply_weekly_json_file')) {
+    function supply_weekly_json_file($userId) {
+        $userId = (int)$userId;
+        $base = rtrim((string)runtime_base_dir(), "\/");
+
+        $stateCandidates = [
+            $base . DIRECTORY_SEPARATOR . 'state' . DIRECTORY_SEPARATOR . "weekly_consumption_{$userId}_state.json",
+            $base . DIRECTORY_SEPARATOR . 'export' . DIRECTORY_SEPARATOR . "weekly_consumption_{$userId}_state.json",
+            $base . DIRECTORY_SEPARATOR . "weekly_consumption_{$userId}_state.json",
+        ];
+
+        foreach ($stateCandidates as $stateFile) {
+            if ($stateFile === '' || !is_file($stateFile)) continue;
+            $state = json_decode((string)@file_get_contents($stateFile), true);
+            if (!is_array($state)) continue;
+
+            $jsonCandidates = [
+                trim((string)($state['json'] ?? '')),
+                trim((string)($state['weekly_json'] ?? '')),
+                trim((string)($state['json_path'] ?? '')),
+                trim((string)($state['path'] ?? '')),
+            ];
+            foreach ($jsonCandidates as $jsonPath) {
+                if ($jsonPath !== '' && is_file($jsonPath)) return $jsonPath;
+            }
+        }
+
+        $fallbackCandidates = [
+            $base . DIRECTORY_SEPARATOR . 'export' . DIRECTORY_SEPARATOR . "weekly_consumption_{$userId}.json",
+            $base . DIRECTORY_SEPARATOR . 'state' . DIRECTORY_SEPARATOR . "weekly_consumption_{$userId}.json",
+            $base . DIRECTORY_SEPARATOR . "weekly_consumption_{$userId}.json",
+        ];
+        foreach ($fallbackCandidates as $fallback) {
+            if ($fallback !== '' && is_file($fallback)) return $fallback;
+        }
+
+        return '';
+    }
+}
+
+
+if (!function_exists('supply_min_reserve_by_id')) {
+    function supply_min_reserve_by_id($ingredientId) {
+        $ingredientId = (int)$ingredientId;
+        $syrupIds = [11019, 11018, 11017, 11001];
+        return in_array($ingredientId, $syrupIds, true) ? 30 : 40;
+    }
+}
+
+if (!function_exists('supply_days_left_by_weekly')) {
+    function supply_days_left_by_weekly($currentValue, $weeklyNeed, $ingredientId) {
+        $currentValue = (float)$currentValue;
+        $weeklyNeed = (float)$weeklyNeed;
+        $ingredientId = (int)$ingredientId;
+
+        if ($weeklyNeed <= 0) return null;
+
+        $dailyNeed = $weeklyNeed / 7.0;
+        if ($dailyNeed <= 0) return null;
+
+        $reserve = (float)supply_min_reserve_by_id($ingredientId);
+        $usable = $currentValue - $reserve;
+        if ($usable < 0) $usable = 0.0;
+
+        return $usable / $dailyNeed;
+    }
+}
+if (!function_exists('load_supply_weekly_map')) {
+    function load_supply_weekly_map($userId) {
+        $jsonFile = supply_weekly_json_file($userId);
+        if ($jsonFile === '' || !is_file($jsonFile)) {
+            return [[], $jsonFile];
+        }
+
+        $rows = json_decode((string)@file_get_contents($jsonFile), true);
+        if (!is_array($rows)) {
+            return [[], $jsonFile];
+        }
+
+        $map = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) continue;
+
+            $deviceId = (int)($row['Device ID'] ?? 0);
+            $ingredientId = (int)($row['Supply ID'] ?? 0);
+            if ($deviceId <= 0 || $ingredientId <= 0) continue;
+
+            $weekly = (float)($row['Weekly_Consumption'] ?? 0);
+            if ($weekly <= 0) continue;
+
+            if (!isset($map[$deviceId]) || !is_array($map[$deviceId])) {
+                $map[$deviceId] = [];
+            }
+            $map[$deviceId][$ingredientId] = $weekly;
+        }
+
+        return [$map, $jsonFile];
+    }
+}
 
 // ========== 2) SUPPLY ==========
         $notifySupply = function_exists('isTelegramNotifyEnabled')
@@ -9,13 +162,28 @@
             : (bool)($acc['telegram_notify']['supply'] ?? true);
 
         // Supply anti-spam / cooldown (per machine + ingredient key)
-        // Default: 1 hour. Can be overridden in config: $CFG['supply']['cooldown_sec']
-        $supplyCooldown = 3600;
-        if (isset($CFG) && is_array($CFG) && isset($CFG['supply']) && is_array($CFG['supply']) && isset($CFG['supply']['cooldown_sec'])) {
-            $supplyCooldown = (int)$CFG['supply']['cooldown_sec'];
-        }
-        if ($supplyCooldown < 0) $supplyCooldown = 0;
+        $lowCooldown  = 24 * 3600;
+        $needCooldown = 6 * 3600;
+        if (isset($CFG) && is_array($CFG) && isset($CFG['supply']) && is_array($CFG['supply'])) {
+            if (isset($CFG['supply']['low_cooldown_sec'])) {
+                $lowCooldown = (int)$CFG['supply']['low_cooldown_sec'];
+            } elseif (isset($CFG['supply']['cooldown_sec'])) {
+                $lowCooldown = (int)$CFG['supply']['cooldown_sec'];
+            }
 
+            if (isset($CFG['supply']['need_cooldown_sec'])) {
+                $needCooldown = (int)$CFG['supply']['need_cooldown_sec'];
+            }
+        }
+        if ($lowCooldown < 0) $lowCooldown = 0;
+        if ($needCooldown < 0) $needCooldown = 0;
+
+        list($weeklyConsumptionMap, $weeklyConsumptionFile) = load_supply_weekly_map($userId);
+        if (count($weeklyConsumptionMap) > 0) {
+            xhe_log('supply', "WEEKLY map loaded file={$weeklyConsumptionFile} devices=" . count($weeklyConsumptionMap), "DEBUG");
+        } else {
+            xhe_log('supply', "WEEKLY map empty file={$weeklyConsumptionFile} user_id={$userId}", "DEBUG");
+        }
 
         $parsedSupply = [];
         $supplySource = 'none';
@@ -156,83 +324,140 @@
                 $supplies = $devRow['supplies'] ?? null;
                 if (!is_array($supplies)) continue;
 
+                if (!isset($state['supplies_alert'][$accountKey][$deviceId]) || !is_array($state['supplies_alert'][$accountKey][$deviceId])) {
+                    $state['supplies_alert'][$accountKey][$deviceId] = [];
+                }
+
+                $needItems = [];
                 $lowItems = [];
-                $markKeys = [];
+                $markNeedKeys = [];
+                $markLowKeys = [];
 
                 foreach ($supplies as $supplyId => $s) {
-                    $rawName = trim((string)($s['name'] ?? ''));
-                    $value   = (int)($s['value'] ?? 0);
-                    if ($rawName === '') continue;
+                    $ingredientId = (int)$supplyId;
+                    $rule = supply_rule_by_id($ingredientId);
+                    if (!is_array($rule)) continue;
 
-                    $key = supply_key_from_name($rawName);
-                    if ($key === null) continue;
+                    $value = (int)($s['value'] ?? 0);
+                    $label = trim((string)($s['name'] ?? ''));
+                    if ($label === '') $label = (string)($rule['label'] ?? ('ID ' . $ingredientId));
 
-                    $limit = (int)($supplyThresholds[$key] ?? -1);
-                    if ($limit < 0) continue;
+                    $stateKey = trim((string)($rule['state_key'] ?? ('ingredient_' . $ingredientId)));
+                    if ($stateKey === '') $stateKey = 'ingredient_' . $ingredientId;
 
-                    // anti-spam per device+key
-                    if (!isset($state['supplies_alert'][$accountKey][$deviceId]) || !is_array($state['supplies_alert'][$accountKey][$deviceId])) {
-                        $state['supplies_alert'][$accountKey][$deviceId] = [];
+                    $lowAlertKey  = $stateKey . '_low';
+                    $needAlertKey = $stateKey . '_need';
+
+                    $weeklyNeed = (float)($weeklyConsumptionMap[$deviceId][$ingredientId] ?? 0);
+                    if ($weeklyNeed <= 0) continue;
+
+                    $weeklyNeedText = rtrim(rtrim(number_format($weeklyNeed, 1, '.', ''), '0'), '.');
+                    $reserveValue = (int)supply_min_reserve_by_id($ingredientId);
+                    $daysLeft = supply_days_left_by_weekly($value, $weeklyNeed, $ingredientId);
+                    $daysLeftText = ($daysLeft === null)
+                        ? '-'
+                        : rtrim(rtrim(number_format($daysLeft, 1, '.', ''), '0'), '.');
+
+                    if ((float)$value > $weeklyNeed) {
+                        xhe_log('supply', "NEED_CHECK_OK account={$accName} vmc={$deviceId} ingredient={$ingredientId} key={$stateKey} value={$value} weekly={$weeklyNeedText} reserve={$reserveValue} days_left={$daysLeftText}", "INFO");
+                        continue;
                     }
 
-                    $lastTs = (int)($state['supplies_alert'][$accountKey][$deviceId][$key] ?? 0);
-                    if ($lastTs > 0 && (time() - $lastTs) < $supplyCooldown) continue;
+                    $line = "{$label} (ID {$ingredientId}): {$value} | week={$weeklyNeedText} | days={$daysLeftText}";
 
-                    if ($value <= $limit) {
-                        $lowItems[] = "{$rawName} (ID {$supplyId}) = {$value} ≤ {$limit}";
-                        $markKeys[] = $key;
+                    if ($daysLeft !== null && $daysLeft < 2) {
+                        $lastNeedTs = (int)($state['supplies_alert'][$accountKey][$deviceId][$needAlertKey] ?? 0);
+                        if ($lastNeedTs > 0 && (time() - $lastNeedTs) < $needCooldown) {
+                            xhe_log('supply', "SKIP NEED cooldown account={$accName} vmc={$deviceId} ingredient={$ingredientId} key={$needAlertKey}", "DEBUG");
+                            continue;
+                        }
+
+                        $needItems[] = $line;
+                        $markNeedKeys[] = $needAlertKey;
+                    } else {
+                        $lastLowTs = (int)($state['supplies_alert'][$accountKey][$deviceId][$lowAlertKey] ?? 0);
+                        if ($lastLowTs > 0 && (time() - $lastLowTs) < $lowCooldown) {
+                            xhe_log('supply', "SKIP LOW cooldown account={$accName} vmc={$deviceId} ingredient={$ingredientId} key={$lowAlertKey}", "DEBUG");
+                            continue;
+                        }
+
+                        $lowItems[] = $line;
+                        $markLowKeys[] = $lowAlertKey;
                     }
                 }
 
-                if (count($lowItems) === 0) continue;
-
-                $msg = "LOW SUPPLY | {$deviceId}";
-                if ($addressLine !== '') $msg .= " - {$addressLine}";
-                $msg .= "\n" . implode("\n", $lowItems);
-
-                // Supply recommendation: if there are refill tasks, suggest what else can be topped up by full packs.
                 $recLines = [];
-                $rules = supply_rec_rules();
-                foreach ($supplies as $sid2 => $s2) {
-                    $n2 = trim((string)($s2['name'] ?? ''));
-                    if ($n2 === '') continue;
-                    $v2 = (int)($s2['value'] ?? 0);
+                if (count($needItems) > 0 || count($lowItems) > 0) {
+                    $rules = supply_rec_rules();
+                    foreach ($supplies as $sid2 => $s2) {
+                        $ingredientId2 = (int)$sid2;
+                        $n2 = trim((string)($s2['name'] ?? ''));
+                        $v2 = (int)($s2['value'] ?? 0);
 
-                    $k2 = supply_rec_key_from_name($n2);
-                    if ($k2 === null) continue;
-                    if (!isset($rules[$k2])) continue;
+                        $k2 = supply_rec_key_by_id($ingredientId2);
+                        if ($k2 === null && $n2 !== '' && function_exists('supply_rec_key_from_name')) {
+                            $k2 = supply_rec_key_from_name($n2);
+                        }
+                        if ($k2 === null) continue;
+                        if (!isset($rules[$k2])) continue;
 
-                    $cap = (int)($rules[$k2]['cap'] ?? 0);
-                    $pack = (int)($rules[$k2]['pack'] ?? 0);
-                    $label = (string)($rules[$k2]['label'] ?? $k2);
-                    if ($cap <= 0 || $pack <= 0) continue;
+                        $cap = (int)($rules[$k2]['cap'] ?? 0);
+                        $pack = (int)($rules[$k2]['pack'] ?? 0);
+                        $label2 = (string)($rules[$k2]['label'] ?? $k2);
+                        if ($cap <= 0 || $pack <= 0) continue;
 
-                    $free = $cap - $v2;
-                    if ($free < $pack) continue;
+                        $free = $cap - $v2;
+                        if ($free < $pack) continue;
 
-                    $packs = intdiv($free, $pack);
-                    if ($packs <= 0) continue;
+                        $packs = intdiv($free, $pack);
+                        if ($packs <= 0) continue;
 
-                                        // strip_supply_label_container_info
-                    $label = preg_replace('/\\s*\\(контейнер[^)]*\\)/u', '', (string)$label);
-$recLines[] = "• {$label} — {$packs} пач.";
+                        $label2 = preg_replace('/\\s*\\(контейнер[^)]*\\)/u', '', (string)$label2);
+                        $recLines[] = "• {$label2} — {$packs} пач.";
+                    }
                 }
 
-                if (count($recLines) > 0) {
-                    $msg .= "\n\nРекомендация дозаправки:\n" . implode("\n", $recLines);
+                if (count($needItems) > 0) {
+                    $msg = "🚨 NEED SUPPLY | {$deviceId}";
+                    if ($addressLine !== '') $msg .= " - {$addressLine}";
+                    $msg .= "\n" . implode("\n", $needItems);
+                    if (count($recLines) > 0) {
+                        $msg .= "\n\nРекомендация дозаправки:\n" . implode("\n", $recLines);
+                    }
+
+                    $tgKey = $accountKey . '|' . $deviceId . '|need_supply';
+                    if (function_exists('tg_notify')) {
+                        tg_notify('supply', $msg, $chatId, $tgKey, $notifyState);
+                        xhe_log('supply', "SEND TG type=need_supply account={$accName} dev={$deviceId} items=" . count($needItems) . " chat_id={$chatId}", "INFO");
+                    } elseif (function_exists('sendmessage')) {
+                        sendmessage($msg, $chatId);
+                        xhe_log('supply', "SEND TG(fallback) type=need_supply account={$accName} dev={$deviceId} items=" . count($needItems), "INFO");
+                    }
+
+                    $now = time();
+                    foreach ($markNeedKeys as $k) $state['supplies_alert'][$accountKey][$deviceId][$k] = $now;
                 }
 
-                $tgKey = $accountKey . '|' . $deviceId . '|low_supply';
-                if (function_exists('tg_notify')) {
-                    tg_notify('supply', $msg, $chatId, $tgKey, $notifyState);
-                    xhe_log('supply', "SEND TG type=supply account={$accName} dev={$deviceId} items=" . count($lowItems) . " chat_id={$chatId}", "INFO");
-                } elseif (function_exists('sendmessage')) {
-                    sendmessage($msg, $chatId);
-                    xhe_log('supply', "SEND TG(fallback) type=supply account={$accName} dev={$deviceId} items=" . count($lowItems), "INFO");
-                }
+                if (count($lowItems) > 0) {
+                    $msg = "⚠️ LOW SUPPLY | {$deviceId}";
+                    if ($addressLine !== '') $msg .= " - {$addressLine}";
+                    $msg .= "\n" . implode("\n", $lowItems);
+                    if (count($recLines) > 0) {
+                        $msg .= "\n\nРекомендация дозаправки:\n" . implode("\n", $recLines);
+                    }
 
-                $now = time();
-                foreach ($markKeys as $k) $state['supplies_alert'][$accountKey][$deviceId][$k] = $now;
+                    $tgKey = $accountKey . '|' . $deviceId . '|low_supply';
+                    if (function_exists('tg_notify')) {
+                        tg_notify('supply', $msg, $chatId, $tgKey, $notifyState);
+                        xhe_log('supply', "SEND TG type=low_supply account={$accName} dev={$deviceId} items=" . count($lowItems) . " chat_id={$chatId}", "INFO");
+                    } elseif (function_exists('sendmessage')) {
+                        sendmessage($msg, $chatId);
+                        xhe_log('supply', "SEND TG(fallback) type=low_supply account={$accName} dev={$deviceId} items=" . count($lowItems), "INFO");
+                    }
+
+                    $now = time();
+                    foreach ($markLowKeys as $k) $state['supplies_alert'][$accountKey][$deviceId][$k] = $now;
+                }
             }
         } else {
             if (!$notifySupply) xhe_log('supply', "SKIP notify disabled account={$accName}", "DEBUG");

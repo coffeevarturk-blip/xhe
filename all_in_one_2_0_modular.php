@@ -225,12 +225,15 @@ try {
 // $res = sales_process_today($acc, (int)$userId, (string)$cookieStr, (string)$accountKey, $state, $notifyState); // moved inside foreach
 //require __DIR__ . '/test_manual_sync_81941.php';
 //exit;
+// --- TEST: force reboot for VMC 81941 and stop script ---
+
 // ---- MODULES ----
    require_once __DIR__ . '/modules/device_status_runner.php';
 require_once __DIR__ . '/modules/state.php';
 require_once __DIR__ . '/modules/sales_summary.php';
 require_once __DIR__ . '/modules/sales_process.php';
 require_once __DIR__ . '/modules/manual_reboot_compat.php';
+   require_once __DIR__ . '/modules/supply_weekly.php';
 $accCount = 0;
 
 foreach ($accounts as $acc) {
@@ -335,6 +338,8 @@ foreach ($accounts as $acc) {
     run_module_file(cfg_module_enabled($CFG, 'manual_sync', true),      'manual_sync',      __DIR__ . '/modules/manual_sync.php');
                     require_once __DIR__ . '/modules/manual_reboot_compat.php';
 require_once __DIR__ . '/modules/manual_sync_compat.php';
+if (function_exists('xhe_log')) xhe_log('modules', 'RUN supply_weekly', 'DEBUG');
+supply_weekly_run($accName, (int)$userId, $acc);
 }
 // ---- END MODULES ----
 

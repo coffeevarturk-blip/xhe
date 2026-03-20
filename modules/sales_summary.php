@@ -201,7 +201,7 @@ function build_sales_summary_text($acc = null, $userId = null, $cookieStr = null
         return ($b['sum'] <=> $a['sum']);
     });
 
-    $topN = 5;
+    $topN = 10;
     $lines = [];
     $lines[] = "SALES UPDATE | {$accName}";
     $lines[] = "Today: {$targetDateYmd}";

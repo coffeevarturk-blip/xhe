@@ -1,4 +1,16 @@
 <?php
+
+if (!function_exists('cleaning_ctrl_log')) {
+    function cleaning_ctrl_log(string $msg, string $level = 'INFO'): void {
+        if (function_exists('xhe_log')) {
+            xhe_log('cleaning', $msg, $level);
+        } elseif (function_exists('log_msg')) {
+            // fallback
+            log_msg($msg);
+        }
+    }
+}
+
 /**
  * cleaning_control.php
  *
@@ -129,10 +141,10 @@ if (!function_exists('cleaning_ctrl_run_for_account')) {
 
         // Daily gate per account
         $gateKey = 'cleaning_control_' . $userId;
-        if (!cleaning_ctrl_daily_should_run($gateKey, 86400)) {
-            if (function_exists('log_msg')) log_msg("[cleaning][DEBUG] SKIP daily_gate user_id={$userId}");
+      /*  if (!cleaning_ctrl_daily_should_run($gateKey, 86400)) {
+            if (function_exists('xhe_log')) xhe_log('cleaning', "[cleaning][DEBUG] SKIP daily_gate user_id={$userId}", 'INFO');
             return;
-        }
+        }*/
 
         $required = [
             'Mixer 1 Rinse',
@@ -153,7 +165,7 @@ if (!function_exists('cleaning_ctrl_run_for_account')) {
         $csv = cleaning_ctrl_http_get($url, $cookieStr, $http);
 
         if ($csv === null || strlen($csv) < 50) {
-            if (function_exists('log_msg')) log_msg("[cleaning][ERROR] DOWNLOAD failed user_id={$userId} http={$http}");
+            if (function_exists('xhe_log')) xhe_log('cleaning', "[cleaning][ERROR] DOWNLOAD failed user_id={$userId} http={$http}", 'INFO');
             cleaning_ctrl_daily_mark_run($gateKey);
             return;
         }
@@ -168,7 +180,7 @@ if (!function_exists('cleaning_ctrl_run_for_account')) {
 
         $rows = cleaning_ctrl_parse_csv($csv);
         if (empty($rows)) {
-            if (function_exists('log_msg')) log_msg("[cleaning][ERROR] CSV parse empty user_id={$userId} http={$http}");
+            if (function_exists('xhe_log')) xhe_log('cleaning', "[cleaning][ERROR] CSV parse empty user_id={$userId} http={$http}", 'INFO');
             cleaning_ctrl_daily_mark_run($gateKey);
             return;
         }
@@ -231,7 +243,7 @@ if (!function_exists('cleaning_ctrl_run_for_account')) {
                 tg_notify('cleaning', $text, $targetChat, "cleaning_control|{$userId}", $notifyState);
             }
         } else {
-            if (function_exists('log_msg')) log_msg("[cleaning][INFO] OK user_id={$userId} devices=" . count($byVmc));
+            if (function_exists('xhe_log')) xhe_log('cleaning', "[cleaning][INFO] OK user_id={$userId} devices=" . count($byVmc), 'INFO');
         }
 
         cleaning_ctrl_daily_mark_run($gateKey);
@@ -243,6 +255,6 @@ global $CFG, $acc, $userId, $cookieStr, $chatId, $notifyState;
 
 $enabled = cfg_module_enabled($CFG, 'cleaning_control', true);
 if ($enabled) {
-    if (function_exists('log_msg')) log_msg('[cleaning][INFO] START module for account='.(string)($acc['key'] ?? $acc['name'] ?? 'ACC').' user_id='.(string)$userId);
+    if (function_exists('xhe_log')) xhe_log('cleaning', '[cleaning][INFO] START module for account='.(string)($acc['key'] ?? $acc['name'] ?? 'ACC').' user_id='.(string)$userId, 'INFO');
     cleaning_ctrl_run_for_account((array)$acc, (int)$userId, (string)$cookieStr, (string)$chatId, $notifyState);
 }
