@@ -169,12 +169,28 @@ return [
     [
       'name' => 'MAIN',
       'user_id' => 636,
+	  'lang' => 'ru',
       'telegram_chat_id' => 1602852137,
       'telegram_notify' => [
         'sales' => true,
         'supply' => true,
         'errors' => true,
         'reboot' => true,
+        'orders' => false,
+        'heartbeat' => true,
+        'device_status' => true,
+],
+    ],
+	[
+      'name' => 'sergio',
+      'user_id' => 736,
+	  'lang' => 'ru',
+      'telegram_chat_id' => 1259435433,
+      'telegram_notify' => [
+        'sales' => false,
+        'supply' => true,
+        'errors' => true,
+        'reboot' => false,
         'orders' => false,
         'heartbeat' => true,
         'device_status' => true,
