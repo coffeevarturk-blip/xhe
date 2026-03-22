@@ -311,7 +311,19 @@ if (!function_exists('translate_error_desc')) {
             $assoc = rows_to_assoc($rows);
             if (count($assoc) === 0) break;
             foreach ($assoc as $r) $allErr[] = $r;
+// ===== TEST INJECT 7300 =====
+//$allErr[] = [
+  //  err_col_vmc()   => '81952',
+    //err_col_addr()  => 'TEST MACHINE',
+    //err_col_code()  => 'ERROR:7300',
+    //err_col_desc()  => 'TEST BOILER ERROR',
+    //err_col_type()  => 'Error',
+    //err_col_status()=> 'Unresolved',
+    //err_col_time()  => date('Y-m-d H:i:s'),
+//];
 
+xhe_log('errors', 'TEST inject ERROR:7300 vmc=81952', 'INFO');
+// ===== END TEST =====
             if (count($assoc) < $perPageErr) break;
         }
 

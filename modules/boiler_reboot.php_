@@ -135,6 +135,115 @@ $findMachineUrl = function(string $html, string $vmc) {
     return $machineUrl;
 };
 
+
+
+// Resolve latest device status per VMC from export files (prefer JSON, fallback CSV)
+$resolveDeviceStatuses = function() use ($userId) {
+    $base = function_exists('runtime_base_dir') ? runtime_base_dir() : 'c:\\jetinno_runtime';
+    $exportDir = rtrim($base, "\\/") . "\\export";
+    $out = [];
+
+    $normalizeStatus = function($row) {
+        if (!is_array($row)) return '';
+        $candidates = [
+            'Device status','device_status','status','Status','Durum','Cihaz durumu','Cihaz Durumu',
+            'Online status','online_status','is_online','Çevrimiçi durumu','Cihaz durumu / status'
+        ];
+        foreach ($candidates as $k) {
+            if (array_key_exists($k, $row)) {
+                $v = safe_s((string)$row[$k]);
+                if ($v !== '') return mb_strtolower($v, 'UTF-8');
+            }
+        }
+        foreach ($row as $k => $v) {
+            $kk = mb_strtolower(safe_s((string)$k), 'UTF-8');
+            if (strpos($kk, 'status') !== false || strpos($kk, 'durum') !== false || strpos($kk, 'online') !== false) {
+                $vv = safe_s((string)$v);
+                if ($vv !== '') return mb_strtolower($vv, 'UTF-8');
+            }
+        }
+        return '';
+    };
+
+    $extractVmc = function($row) {
+        if (!is_array($row)) return '';
+        $candidates = ['VMC','vmc','vmc_no','VMC No','Cihaz numarası','Cihaz Numarası','device_id','Device ID'];
+        foreach ($candidates as $k) {
+            if (array_key_exists($k, $row)) {
+                $v = preg_replace('~\D+~', '', (string)$row[$k]);
+                if ($v !== '') return $v;
+            }
+        }
+        foreach ($row as $k => $v) {
+            $kk = mb_strtolower(safe_s((string)$k), 'UTF-8');
+            if (strpos($kk, 'vmc') !== false || strpos($kk, 'cihaz') !== false || strpos($kk, 'device') !== false) {
+                $vv = preg_replace('~\D+~', '', (string)$v);
+                if ($vv !== '') return $vv;
+            }
+        }
+        return '';
+    };
+
+    $jsonFiles = glob($exportDir . "\\device_{$userId}_*.json");
+    if (is_array($jsonFiles) && count($jsonFiles) > 0) {
+        usort($jsonFiles, function($a,$b){ return filemtime($b) <=> filemtime($a); });
+        $raw = @file_get_contents($jsonFiles[0]);
+        $j = json_decode((string)$raw, true);
+        $rows = [];
+        if (is_array($j)) {
+            if (isset($j['rows']) && is_array($j['rows'])) $rows = $j['rows'];
+            elseif (isset($j[0]) && is_array($j[0])) $rows = $j;
+        }
+        foreach ($rows as $row) {
+            $vmc = $extractVmc($row);
+            if ($vmc === '') continue;
+            $out[$vmc] = [
+                'status' => $normalizeStatus($row),
+                'source' => basename($jsonFiles[0]),
+            ];
+        }
+        if ($out) return $out;
+    }
+
+    $csvFiles = glob($exportDir . "\\device_{$userId}_*.csv");
+    if (is_array($csvFiles) && count($csvFiles) > 0) {
+        usort($csvFiles, function($a,$b){ return filemtime($b) <=> filemtime($a); });
+        $fp = @fopen($csvFiles[0], 'r');
+        if ($fp) {
+            $headers = fgetcsv($fp);
+            if (is_array($headers)) {
+                while (($rowVals = fgetcsv($fp)) !== false) {
+                    $row = [];
+                    foreach ($headers as $i => $h) $row[(string)$h] = $rowVals[$i] ?? '';
+                    $vmc = $extractVmc($row);
+                    if ($vmc === '') continue;
+                    $out[$vmc] = [
+                        'status' => $normalizeStatus($row),
+                        'source' => basename($csvFiles[0]),
+                    ];
+                }
+            }
+            fclose($fp);
+        }
+    }
+
+    return $out;
+};
+
+$deviceStatuses = $resolveDeviceStatuses();
+$deviceIsOffline = function(string $vmc) use ($deviceStatuses) {
+    $status = mb_strtolower((string)($deviceStatuses[$vmc]['status'] ?? ''), 'UTF-8');
+    if ($status === '') return false; // unknown => do not block reboot
+    return (
+        strpos($status, 'offline') !== false ||
+        strpos($status, 'off-line') !== false ||
+        strpos($status, 'çevrimdışı') !== false ||
+        strpos($status, 'cevrimdisi') !== false ||
+        strpos($status, 'disconnected') !== false ||
+        strpos($status, 'not online') !== false
+    );
+};
+
 // --- UI procedure (as in legacy all_in_one.php) ---
 $confirmSpanNumber = 344;
 $machineInputNumber = 40;
@@ -149,6 +258,13 @@ foreach ($targets as $vmcNo => $info) {
     if ($lastTs > 0 && (time() - $lastTs) <= $cooldownSec) {
         $byAcc = (string)($state['reboot_global']['boiler'][$targetVmc]['acc'] ?? '');
         xhe_log('reboot', "NO_START vmc={$targetVmc} reason=cooldown last_acc={$byAcc} age_sec=".(time()-$lastTs)." left_sec=".max(0, ($cooldownSec-(time()-$lastTs))), 'INFO');
+        continue;
+    }
+
+    if ($deviceIsOffline($targetVmc)) {
+        $statusSrc = (string)($deviceStatuses[$targetVmc]['source'] ?? 'device_status');
+        $statusVal = (string)($deviceStatuses[$targetVmc]['status'] ?? 'offline');
+        xhe_log('reboot', "POSTPONE vmc={$targetVmc} reason=device_offline status={$statusVal} source={$statusSrc}", 'INFO');
         continue;
     }
 

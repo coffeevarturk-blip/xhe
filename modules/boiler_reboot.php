@@ -6,7 +6,7 @@
 // - Uses UI clicks (control.png -> reboot.png -> confirm -> makine tab -> input vmc -> reboot btn)
 
 $cooldownSec = 420; // 7 minutes (global across accounts)
-$codeNeed = 'ERROR:7300';
+$codeNeedList = ['ERROR:7300', 'ERROR:7100', 'ERROR:5C00'];
 
 if (!isset($state) || !is_array($state)) { $state = []; }
 if (!isset($state['reboot_global']) || !is_array($state['reboot_global'])) $state['reboot_global'] = [];
@@ -35,7 +35,7 @@ if (isset($byVmc) && is_array($byVmc)) {
         if (!is_array($rows) || count($rows) === 0) continue;
         foreach ($rows as $row) {
             $c = safe_s((string)($row[err_col_code()] ?? ''));
-            if ($c === $codeNeed) {
+            if (in_array($c, $codeNeedList, true)) {
                 // keep the newest row if possible
                 $dt = safe_s((string)($row[err_col_time()] ?? ''));
                 $ts = parse_ts($dt);
@@ -70,7 +70,7 @@ if (!$targets) {
                     // exported JSON uses Turkish keys, but our helpers err_col_code/time may still work if keys match
                     $codeVal = (string)($row['Hata kodu'] ?? $row['Hata Kodu'] ?? $row['error_code'] ?? '');
                     $codeVal = safe_s($codeVal);
-                    if ($codeVal !== $codeNeed) continue;
+                    if (!in_array($codeVal, $codeNeedList, true)) continue;
 
                     $dt = (string)($row['Oluşma zamanı'] ?? $row['Olusma zamani'] ?? $row['time'] ?? '');
                     $dt = safe_s($dt);
@@ -96,16 +96,11 @@ if (!$targets) {
     return;
 }
 
+xhe_log('reboot', 'TARGETS final count=' . count($targets) . ' source=errors', 'INFO');
 
-// Fetch boiler error page once (HTML) to extract machine links
-$urlBoilerError = "https://saas-hk.jetinno.com/error?user_id={$userId}&data_type=0&daterange=&vmc_no=&like=ERROR%3A7300&vmc_model=&error_code=&is_set=1&perPage=25&order_by%5Bkey%5D=&order_by%5Bvalue%5D=&export=0";
-$res = curl_get_with_cookies($urlBoilerError, $cookieStr, ["Accept: text/html,*/*"], "https://saas-hk.jetinno.com/error");
-$html = (string)($res['body'] ?? '');
 
-if ($html === '') {
-    xhe_log('reboot', "FAIL fetch boiler error page (empty HTML) account={$accountKey}", 'WARN');
-    return;
-}
+// HTML verification of boiler error page removed.
+// Reboot works directly from data produced by modules/errors.php or last errors_*.json export.
 
 // If reboot notify disabled, we still reboot
 $notifyReboot = function_exists('isTelegramNotifyEnabled')
@@ -118,22 +113,6 @@ if (!$notifyReboot) {
 
 // Telegram chat id for this account
 $chatId = $acc['telegram_chat_id'] ?? null;
-
-// Helper: find machine URL for a given VMC in boiler error page HTML
-$findMachineUrl = function(string $html, string $vmc) {
-    $machineUrl = '';
-    $vmcEsc = preg_quote($vmc, '~');
-    if (preg_match('~href="([^"]*vmc_no='.$vmcEsc.'[^"]*)"~i', $html, $m)) {
-        $machineUrl = html_entity_decode($m[1], ENT_QUOTES);
-    } elseif (preg_match('~href="([^"]*vmc_no=\d+[^"]*)"~i', $html, $m2)) {
-        // fallback: first vmc link
-        $machineUrl = html_entity_decode($m2[1], ENT_QUOTES);
-    }
-    if ($machineUrl !== '' && strpos($machineUrl, 'http') !== 0) {
-        $machineUrl = 'https://saas-hk.jetinno.com' . (substr($machineUrl, 0, 1) === '/' ? '' : '/') . $machineUrl;
-    }
-    return $machineUrl;
-};
 
 
 
@@ -245,7 +224,7 @@ $deviceIsOffline = function(string $vmc) use ($deviceStatuses) {
 };
 
 // --- UI procedure (as in legacy all_in_one.php) ---
-$confirmSpanNumber = 344;
+$confirmSpanNumber = 350;
 $machineInputNumber = 40;
 $rebootBtnNumber = 55;
 
@@ -268,17 +247,14 @@ foreach ($targets as $vmcNo => $info) {
         continue;
     }
 
-    $machineUrl = $findMachineUrl($html, $targetVmc);
-    if ($machineUrl === '') {
-        xhe_log('reboot', "FAIL find machine url for vmc={$targetVmc} on boiler page", 'WARN');
-        continue;
-    }
+    $machineUrl = "https://saas-hk.jetinno.com/device_info?vmc_no=" . urlencode($targetVmc) . "&admin=";
+    xhe_log('reboot', "MACHINE_URL direct_from_error vmc={$targetVmc} url={$machineUrl}", 'DEBUG');
 
     $location = function_exists('getLocation') ? (getLocation($locations, $targetVmc) ?? '') : '';
     if ($location === '') $location = 'Unknown';
     $dt = safe_s((string)($targetRow[err_col_time()] ?? date('Y-m-d H:i:s')));
 
-    xhe_log('reboot', "START vmc={$targetVmc} loc={$location} reason=boiler_7300", 'INFO');
+    xhe_log('reboot', "START vmc={$targetVmc} loc={$location} reason=boiler_auto", 'INFO');
 
     $browser->close_all_tabs();
     $browser->navigate($machineUrl);
@@ -292,7 +268,8 @@ foreach ($targets as $vmcNo => $info) {
     $image->click_by_src("https://saas-hk.jetinno.com/home/images/reboot.png", false);
     $browser->wait(3);
 
-    // confirm
+    //// confirm$anchor->click_by_inner_text("makine", false);
+
     if (isset($span) && is_object($span)) {
         $span->click_by_number($confirmSpanNumber);
         $browser->wait(3);
@@ -309,19 +286,13 @@ $btn->click_by_number(37);
     // input vmc
     $input->click_by_number($machineInputNumber);
     $input->set_value_by_number($machineInputNumber, $targetVmc);
-    $browser->wait(1);
-
-    // reboot button
-      $btn->set_focus_by_inner_text("Onaylamak", false);
-
-    //  $btn->click_by_inner_text("Onaylamak", false);
-$btn->set_focus_by_inner_html("Onaylamak", false);
-$btn->click_by_inner_html("Onaylamak", false);
-
-//    $btn->set_focus_by_number($rebootBtnNumber);
-//    $btn->click_by_number($rebootBtnNumber);
     $browser->wait(3);
-
+    
+  
+  $btn->set_focus_by_number($rebootBtnNumber);
+   $btn->click_by_number($rebootBtnNumber);
+    $browser->wait(3);
+//sleep(20);
     // save global reboot state
     $state['reboot_global']['boiler'][$targetVmc] = ['ts' => time(), 'acc' => (string)$accountKey];
 
@@ -329,10 +300,11 @@ $btn->click_by_inner_html("Onaylamak", false);
 
     // telegram notify (optional)
     if ($notifyReboot && $chatId !== null && function_exists('tg_notify')) {
+		$errCode = safe_s((string)($targetRow[err_col_code()] ?? 'UNKNOWN'));
         $msg = "🔥 BOILER REBOOT".
             "\nVMC: {$targetVmc}".
             "\nLocation: {$location}".
-            "\nError: 7300".
+            "\nError: {$errCode}".
             "\nDetected: {$dt}".
             "\nAccount: {$accountKey}";
         tg_notify('reboot', $msg, (string)$chatId, $accountKey.'|boiler|'.$targetVmc, $notifyState);
