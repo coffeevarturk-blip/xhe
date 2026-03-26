@@ -28,6 +28,16 @@ if (!function_exists('tgcmd_log')) {
     }
 }
 
+
+if (!function_exists('tgcmd_log_xhe')) {
+    function tgcmd_log_xhe(string $line, string $level = 'INFO', string $tag = 'tgcmd'): void {
+        tgcmd_log($line, $tag);
+        if (function_exists('xhe_log')) {
+            xhe_log('tgcmd', $line, $level);
+        }
+    }
+}
+
 if (!function_exists('tgcmd_state_path')) {
     function tgcmd_state_path(): string {
         $base = tgcmd_runtime_dir();
@@ -173,8 +183,16 @@ if (!function_exists('tgcmd_rate_limit_ok')) {
         if (!isset($state['rl'])) $state['rl'] = [];
         if (!isset($state['rl'][$chatId])) $state['rl'][$chatId] = [];
         $last = (int)($state['rl'][$chatId][$key] ?? 0);
-        if ($cooldownSec > 0 && ($now - $last) < $cooldownSec) return false;
+
+        if ($cooldownSec > 0 && ($now - $last) < $cooldownSec) {
+            $left = $cooldownSec - ($now - $last);
+            if ($left < 0) $left = 0;
+            tgcmd_log_xhe("RATE_LIMIT_SKIP chat={$chatId} key={$key} cooldown_sec={$cooldownSec} left_sec={$left}", 'DEBUG', 'rate');
+            return false;
+        }
+
         $state['rl'][$chatId][$key] = $now;
+        tgcmd_log_xhe("RATE_LIMIT_OK chat={$chatId} key={$key} cooldown_sec={$cooldownSec}", 'DEBUG', 'rate');
         return true;
     }
 }
@@ -589,6 +607,7 @@ function tgcmd_sales_today_summary(array $CFG, string $chatId, array $args): str
 if (!function_exists('tgcmd_handle_command')) {
     function tgcmd_handle_command(array $CFG, array &$state, string $chatId, string $from, string $text): void {
         [$cmd, $args] = tgcmd_parse_cmd($text);
+        tgcmd_log_xhe("HANDLE_START chat={$chatId} from={$from} cmd={$cmd} args=" . json_encode($args, JSON_UNESCAPED_UNICODE), 'INFO', 'cmd');
 
         $cooldown = (int)($CFG['telegram']['commands']['cooldown_sec'] ?? 5);
         $cooldownHeavy = (int)($CFG['telegram']['commands']['cooldown_heavy_sec'] ?? 20);
@@ -606,13 +625,16 @@ if ($cmd === '/make') {
     }
 
     if (!function_exists('make_drink_universal')) {
+        tgcmd_log_xhe("MAKE_NO_FUNCTION chat={$chatId} vmc={$vmc} drink_id={$drink_id}", 'WARNING', 'cmd');
         tgcmd_send_message($CFG, $chatId, "MAKE: make_drink_universal() не найдена ❌");
         return;
     }
 
     // прямое выполнение (без lock, без доп проверок)
+    tgcmd_log_xhe("MAKE_CALL chat={$chatId} vmc={$vmc} drink_id={$drink_id}", 'INFO', 'cmd');
     $res = make_drink_universal($vmc, $drink_id);
     $st  = (string)($res['status'] ?? 'ui_error');
+    tgcmd_log_xhe("MAKE_RESULT chat={$chatId} vmc={$vmc} drink_id={$drink_id} status={$st}", 'INFO', 'cmd');
 
     if ($st === 'success') {
         tgcmd_send_message($CFG, $chatId, "✅ MAKE OK | VMC: $vmc | DRINK: $drink_id");
@@ -628,30 +650,44 @@ if ($cmd === '/make') {
 }
 
         if ($cmd === '/start' || $cmd === '/help' || $cmd === '/?') {
-            if (!tgcmd_rate_limit_ok($state, $chatId, 'help', $cooldown)) return;
+            if (!tgcmd_rate_limit_ok($state, $chatId, 'help', $cooldown)) {
+                tgcmd_log_xhe("CMD_SKIP chat={$chatId} cmd=/help reason=rate_limit", 'DEBUG', 'cmd');
+                return;
+            }
             tgcmd_send_message($CFG, $chatId, tgcmd_help_text());
             return;
         }
 
         if ($cmd === '/ping') {
-            if (!tgcmd_rate_limit_ok($state, $chatId, 'ping', $cooldown)) return;
+            if (!tgcmd_rate_limit_ok($state, $chatId, 'ping', $cooldown)) {
+                tgcmd_log_xhe("CMD_SKIP chat={$chatId} cmd=/ping reason=rate_limit", 'DEBUG', 'cmd');
+                return;
+            }
             tgcmd_send_message($CFG, $chatId, "pong ✅ " . date('Y-m-d H:i:s'));
             return;
         }
 
         if ($cmd === '/sales') {
-            if (!tgcmd_rate_limit_ok($state, $chatId, 'sales', $cooldownHeavy)) return;
+            if (!tgcmd_rate_limit_ok($state, $chatId, 'sales', $cooldownHeavy)) {
+                tgcmd_log_xhe("CMD_SKIP chat={$chatId} cmd=/sales reason=rate_limit", 'DEBUG', 'cmd');
+                return;
+            }
 
             $date = '';
             if (($args[0] ?? '') === 'date' && isset($args[1])) $date = (string)$args[1];
 
+            tgcmd_log_xhe("SALES_CALL chat={$chatId} args=" . json_encode($args, JSON_UNESCAPED_UNICODE), 'INFO', 'cmd');
             $txt = tgcmd_sales_today_summary($CFG, $chatId, $args);
+            tgcmd_log_xhe("SALES_RESULT chat={$chatId} text_len=" . strlen($txt), 'INFO', 'cmd');
 tgcmd_send_message($CFG, $chatId, $txt);
             return;
         }
 
         if ($cmd === '/reboot') {
-            if (!tgcmd_rate_limit_ok($state, $chatId, 'reboot', $cooldownHeavy)) return;
+            if (!tgcmd_rate_limit_ok($state, $chatId, 'reboot', $cooldownHeavy)) {
+                tgcmd_log_xhe("CMD_SKIP chat={$chatId} cmd=/reboot reason=rate_limit", 'DEBUG', 'cmd');
+                return;
+            }
             $vmc = preg_replace('~\D+~', '', (string)($args[0] ?? ''));
             if ($vmc === '') {
                 tgcmd_send_message($CFG, $chatId, "Формат: /reboot 81941");
@@ -660,16 +696,22 @@ tgcmd_send_message($CFG, $chatId, $txt);
 
             // Hook: call your existing reboot trigger
             if (function_exists('request_machine_reboot')) {
+                tgcmd_log_xhe("REBOOT_CALL chat={$chatId} vmc={$vmc}", 'INFO', 'cmd');
                 $ok = (bool)request_machine_reboot($vmc);
+                tgcmd_log_xhe("REBOOT_RESULT chat={$chatId} vmc={$vmc} ok=" . ($ok ? 'true' : 'false'), 'INFO', 'cmd');
                 tgcmd_send_message($CFG, $chatId, $ok ? "REBOOT queued ✅ VMC: $vmc" : "REBOOT failed ❌ VMC: $vmc");
             } else {
+                tgcmd_log_xhe("REBOOT_NO_FUNCTION chat={$chatId} vmc={$vmc}", 'WARNING', 'cmd');
                 tgcmd_send_message($CFG, $chatId, "REBOOT: нет функции request_machine_reboot() в сборке ❌");
             }
             return;
         }
 
         if ($cmd === '/sync') {
-            if (!tgcmd_rate_limit_ok($state, $chatId, 'sync', $cooldownHeavy)) return;
+            if (!tgcmd_rate_limit_ok($state, $chatId, 'sync', $cooldownHeavy)) {
+                tgcmd_log_xhe("CMD_SKIP chat={$chatId} cmd=/sync reason=rate_limit", 'DEBUG', 'cmd');
+                return;
+            }
             $vmc = preg_replace('~\D+~', '', (string)($args[0] ?? ''));
             if ($vmc === '') {
                 tgcmd_send_message($CFG, $chatId, "Формат: /sync 81941");
@@ -677,9 +719,12 @@ tgcmd_send_message($CFG, $chatId, $txt);
             }
 
             if (function_exists('request_machine_sync')) {
+                tgcmd_log_xhe("SYNC_CALL chat={$chatId} vmc={$vmc}", 'INFO', 'cmd');
                 $ok = (bool)request_machine_sync($vmc);
+                tgcmd_log_xhe("SYNC_RESULT chat={$chatId} vmc={$vmc} ok=" . ($ok ? 'true' : 'false'), 'INFO', 'cmd');
                 tgcmd_send_message($CFG, $chatId, $ok ? "SYNC queued ✅ VMC: $vmc" : "SYNC failed ❌ VMC: $vmc");
             } else {
+                tgcmd_log_xhe("SYNC_NO_FUNCTION chat={$chatId} vmc={$vmc}", 'WARNING', 'cmd');
                 tgcmd_send_message($CFG, $chatId, "SYNC: нет функции request_machine_sync() в сборке ❌");
             }
             return;
@@ -687,7 +732,10 @@ tgcmd_send_message($CFG, $chatId, $txt);
 
         // Unknown command
         if (str_starts_with($cmd, '/')) {
-            if (!tgcmd_rate_limit_ok($state, $chatId, 'unknown', $cooldown)) return;
+            if (!tgcmd_rate_limit_ok($state, $chatId, 'unknown', $cooldown)) {
+                tgcmd_log_xhe("CMD_SKIP chat={$chatId} cmd={$cmd} reason=rate_limit", 'DEBUG', 'cmd');
+                return;
+            }
             tgcmd_send_message($CFG, $chatId, "Неизвестная команда. /help");
         }
     }
@@ -706,7 +754,12 @@ if (!function_exists('tg_commands_poll')) {
         $offset = (int)($state['last_update_id'] ?? 0) + 1;
 
         $updates = tgcmd_get_updates($CFG, $offset, 25);
-        if (!is_array($updates) || count($updates) === 0) return 0;
+        if (!is_array($updates) || count($updates) === 0) {
+            tgcmd_log_xhe("POLL_EMPTY offset={$offset}", 'DEBUG', 'poll');
+            return 0;
+        }
+
+        tgcmd_log_xhe("POLL_UPDATES offset={$offset} count=" . count($updates), 'INFO', 'poll');
 
         $processed = 0;
 
@@ -739,6 +792,7 @@ if (!function_exists('tg_commands_poll')) {
             if (!tgcmd_is_allowed_chat($CFG, $chatId)) {
                 // optional: silently ignore or notify
                 $notify = (bool)($CFG['telegram']['commands']['notify_denied'] ?? false);
+                tgcmd_log_xhe("DENY chat={$chatId} from={$fromUser} text=" . str_replace(["\r","\n"], [' ',' '], $text), 'WARNING', 'auth');
                 if ($notify) tgcmd_send_message($CFG, $chatId, "Доступ запрещён ❌");
                 continue;
             }
@@ -748,6 +802,7 @@ if (!function_exists('tg_commands_poll')) {
         }
 
         tgcmd_state_save($state);
+        tgcmd_log_xhe("POLL_DONE processed={$processed} last_update_id=" . (int)($state['last_update_id'] ?? 0), 'INFO', 'poll');
         return $processed;
     }
 }

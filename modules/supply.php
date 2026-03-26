@@ -358,10 +358,16 @@ if (!function_exists('load_supply_weekly_map')) {
                         ? '-'
                         : rtrim(rtrim(number_format($daysLeft, 1, '.', ''), '0'), '.');
 
-                    if ((float)$value > $weeklyNeed) {
-                        xhe_log('supply', "NEED_CHECK_OK account={$accName} vmc={$deviceId} ingredient={$ingredientId} key={$stateKey} value={$value} weekly={$weeklyNeedText} reserve={$reserveValue} days_left={$daysLeftText}", "INFO");
-                        continue;
-                    }
+if ((float)$value > $weeklyNeed) {
+    if (!empty($CFG['supply']['log_ok'])) {
+        xhe_log(
+            'supply',
+            "NEED_CHECK_OK account={$accName} vmc={$deviceId} ingredient={$ingredientId} key={$stateKey} value={$value} weekly={$weeklyNeedText} reserve={$reserveValue} days_left={$daysLeftText}",
+            "INFO"
+        );
+    }
+    continue;
+}
 
                     $line = "{$label} (ID {$ingredientId}): {$value} | week={$weeklyNeedText} | days={$daysLeftText}";
 

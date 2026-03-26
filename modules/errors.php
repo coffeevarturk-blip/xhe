@@ -162,11 +162,17 @@ if (!function_exists('load_error_translations_map')) {
             $normCode = normalize_notify_code($rawCode);
             if ($normCode === '') continue;
 
+            $descRuIdx = $idx['desc_ru'] ?? null;
+            $descEnIdx = $idx['desc_en'] ?? null;
+            $descTrIdx = $idx['desc_tr'] ?? null;
+            $skipIdx   = $idx['skip'] ?? null;
+
             $cache[$normCode] = [
-                'ru'   => trim((string)($row[$idx['desc_ru']] ?? '')),
-                'en'   => trim((string)($row[$idx['desc_en']] ?? '')),
-                'tr'   => trim((string)($row[$idx['desc_tr']] ?? '')),
-                            ];
+                'ru'   => $descRuIdx !== null ? trim((string)($row[$descRuIdx] ?? '')) : '',
+                'en'   => $descEnIdx !== null ? trim((string)($row[$descEnIdx] ?? '')) : '',
+                'tr'   => $descTrIdx !== null ? trim((string)($row[$descTrIdx] ?? '')) : '',
+                'skip' => $skipIdx   !== null ? trim((string)($row[$skipIdx]   ?? '')) : '',
+            ];
         }
 
         if (function_exists('flock')) {
@@ -181,7 +187,8 @@ if (!function_exists('load_error_translations_map')) {
 
 if (!function_exists('error_translation_should_skip')) {
     function error_translation_should_skip(array $entry): bool {
-        return false;
+        $v = strtolower(trim((string)($entry['skip'] ?? '')));
+        return in_array($v, ['1', 'true', 'yes', 'y', 'skip'], true);
     }
 }
 
@@ -238,14 +245,14 @@ if (!function_exists('error_translations_append_missing')) {
 
         fseek($fh, 0, SEEK_END);
         if ($needHeader || filesize($csvFile) === 0) {
-            @fwrite($fh, "code;desc_ru;desc_en;desc_tr
-");
+            @fwrite($fh, "code;desc_ru;desc_en;desc_tr;skip\n");
         }
 
         $line = [
             $normCode,
             '',
             trim((string)$desc),
+            '',
             ''
         ];
 
@@ -322,7 +329,7 @@ if (!function_exists('translate_error_desc')) {
     //err_col_time()  => date('Y-m-d H:i:s'),
 //];
 
-xhe_log('errors', 'TEST inject ERROR:7300 vmc=81952', 'INFO');
+//xhe_log('errors', 'TEST inject ERROR:7300 vmc=81952', 'INFO');
 // ===== END TEST =====
             if (count($assoc) < $perPageErr) break;
         }

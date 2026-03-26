@@ -505,32 +505,60 @@ if (!function_exists('tg_notify')) {
             $dCount = 0;
         }
 
-        // max per hour/day
+ // max per hour/day
         if ($maxPerHour > 0 && $hCount >= $maxPerHour) {
             if ($needSave) {
                 $bucket['hour'] = ['start' => $hStart, 'count' => $hCount];
                 $bucket['day']  = ['start' => $dStart, 'count' => $dCount];
                 state_save(state_path('notify'), $state);
             }
+
+            if (function_exists('log_info')) {
+                log_info(
+                    'tg_notify',
+                    "SKIP type={$effectiveType} key={$key} reason=max_per_hour count={$hCount} limit={$maxPerHour}"
+                );
+            }
+
             return;
         }
+
         if ($maxPerDay > 0 && $dCount >= $maxPerDay) {
             if ($needSave) {
                 $bucket['hour'] = ['start' => $hStart, 'count' => $hCount];
                 $bucket['day']  = ['start' => $dStart, 'count' => $dCount];
                 state_save(state_path('notify'), $state);
             }
+
+            if (function_exists('log_info')) {
+                log_info(
+                    'tg_notify',
+                    "SKIP type={$effectiveType} key={$key} reason=max_per_day count={$dCount} limit={$maxPerDay}"
+                );
+            }
+
             return;
         }
 
         // cooldown by key
         $lastTs = (int)($bucket['keys'][$key] ?? 0);
         if ($lastTs > 0 && $cooldown > 0 && ($now - $lastTs) < $cooldown) {
+            $leftSec = $cooldown - ($now - $lastTs);
+            if ($leftSec < 0) $leftSec = 0;
+
             if ($needSave) {
                 $bucket['hour'] = ['start' => $hStart, 'count' => $hCount];
                 $bucket['day']  = ['start' => $dStart, 'count' => $dCount];
                 state_save(state_path('notify'), $state);
             }
+
+            if (function_exists('log_info')) {
+                log_info(
+                    'tg_notify',
+                    "SKIP type={$effectiveType} key={$key} reason=cooldown left_sec={$leftSec} cooldown_sec={$cooldown}"
+                );
+            }
+
             return;
         }
 
