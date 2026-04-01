@@ -137,8 +137,8 @@ return [
         'supply' => [
             'enabled' => true,
             'cooldown_sec' => 3600, // 1 час на один и тот же ингредиент/машину
-            'max_per_hour' => 30,
-            'max_per_day'  => 300,
+            'max_per_hour' => 100,
+            'max_per_day'  => 900,
         ],
 
         // Новые заказы (Last Order)
@@ -184,21 +184,7 @@ return [
         'device_status' => true,
 ],
     ],
-	[
-      'name' => 'sergio',
-      'user_id' => 736,
-	  'lang' => 'ru',
-      'telegram_chat_id' => 1259435433,
-      'telegram_notify' => [
-        'sales' => false,
-        'supply' => true,
-        'errors' => true,
-        'reboot' => false,
-        'orders' => false,
-        'heartbeat' => true,
-        'device_status' => true,
-],
-    ],
+
 
   ],
 ],

@@ -12,6 +12,11 @@ if (!isset($state) || !is_array($state)) { $state = []; }
 if (!isset($state['reboot_global']) || !is_array($state['reboot_global'])) $state['reboot_global'] = [];
 if (!isset($state['reboot_global']['boiler']) || !is_array($state['reboot_global']['boiler'])) $state['reboot_global']['boiler'] = [];
 
+// Daily limit for ERROR:7100 reboots: max 3 per VMC per day
+if (!isset($state['reboot_daily']) || !is_array($state['reboot_daily'])) $state['reboot_daily'] = [];
+if (!isset($state['reboot_daily']['7100']) || !is_array($state['reboot_daily']['7100'])) $state['reboot_daily']['7100'] = [];
+
+
 // Pull XHE objects if we are inside a function scope
 if (!isset($browser) && isset($GLOBALS['browser'])) $browser = $GLOBALS['browser'];
 if (!isset($anchor)  && isset($GLOBALS['anchor']))  $anchor  = $GLOBALS['anchor'];
@@ -232,6 +237,22 @@ foreach ($targets as $vmcNo => $info) {
     $targetVmc = (string)$vmcNo;
     $targetRow = is_array($info['row'] ?? null) ? $info['row'] : [];
 
+    $errCode = safe_s((string)($targetRow[err_col_code()] ?? ''));
+    if ($errCode === 'ERROR:7100') {
+        $today = date('Y-m-d');
+        $bucket = $state['reboot_daily']['7100'][$targetVmc] ?? ['date' => $today, 'count' => 0];
+        $bucketDate = (string)($bucket['date'] ?? $today);
+        $bucketCount = (int)($bucket['count'] ?? 0);
+        if ($bucketDate !== $today) {
+            $bucketDate = $today;
+            $bucketCount = 0;
+        }
+        if ($bucketCount >= 3) {
+            xhe_log('reboot', "NO_START vmc={$targetVmc} reason=daily_limit_7100 limit=3 date={$today}", 'INFO');
+            continue;
+        }
+    }
+
     // Global cooldown (across accounts) per machine
     $lastTs = (int)($state['reboot_global']['boiler'][$targetVmc]['ts'] ?? 0);
     if ($lastTs > 0 && (time() - $lastTs) <= $cooldownSec) {
@@ -295,6 +316,20 @@ $btn->click_by_number(37);
 //sleep(20);
     // save global reboot state
     $state['reboot_global']['boiler'][$targetVmc] = ['ts' => time(), 'acc' => (string)$accountKey];
+
+    if ($errCode === 'ERROR:7100') {
+        $today = date('Y-m-d');
+        $bucket = $state['reboot_daily']['7100'][$targetVmc] ?? ['date' => $today, 'count' => 0];
+        $bucketDate = (string)($bucket['date'] ?? $today);
+        $bucketCount = (int)($bucket['count'] ?? 0);
+        if ($bucketDate !== $today) {
+            $bucketDate = $today;
+            $bucketCount = 0;
+        }
+        $bucketCount++;
+        $state['reboot_daily']['7100'][$targetVmc] = ['date' => $today, 'count' => $bucketCount];
+        xhe_log('reboot', "LIMIT7100 vmc={$targetVmc} date={$today} count={$bucketCount}/3", 'INFO');
+    }
 
     xhe_log('reboot', "DONE vmc={$targetVmc} saved_state=1", 'INFO');
 

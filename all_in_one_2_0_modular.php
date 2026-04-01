@@ -207,6 +207,7 @@ $outDir  = $baseDir . "\\export";
  * Update VMC locations map from errors/warnings CSV (Cihaz numarası + Cihaz adresi).
  * Throttled by $minIntervalSeconds based on state['updated_at'].
  */
+$browser->clear_cache();
 
 while(true){
 // -------------------- Start --------------------
