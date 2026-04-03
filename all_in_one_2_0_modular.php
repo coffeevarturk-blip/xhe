@@ -215,6 +215,9 @@ try {
     if (is_object($browser)) {
         $browser->close_all_tabs();
         $browser->navigate("https://saas-hk.jetinno.com/index");
+ $browser->wait(5);
+ $span->click_by_number(44);
+
         $browser->wait(5);
     }
 

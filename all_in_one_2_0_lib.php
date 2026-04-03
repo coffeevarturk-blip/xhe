@@ -186,6 +186,9 @@ function loginIfNeeded(
 
         if (is_object($browser)) $browser->wait(3);
         sleep(1);
+		 $span->click_by_number(44);
+
+        $browser->wait(5);
     }
 
     $stillLogin = (is_object($input) && $input->is_exist_by_attribute("id", "username", false));

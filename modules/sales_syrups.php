@@ -18,16 +18,12 @@
         $allSalesRows = [];
         $salesSkip = false;
 
-// --- листаем страницы, пока на странице есть заказы за СЕГОДНЯ ---
+// --- листаем страницы, пока идут записи за СЕГОДНЯ ---
 $todayStr = $today; // YYYY-MM-DD
-$page = 1;
 $perPageSales = 200;
 $maxPagesSales = 300;
 
-// если в CSV нет времени — не сможем понять где остановиться, тогда только первая страница
-$canStopByDate = true;
-
-for ($page=1; $page<=$maxPagesSales; $page++) {
+for ($page = 1; $page <= $maxPagesSales; $page++) {
     $url = build_sales_orders_csv_url($userId, $datemonthSales, $daterangeToday, $page, $perPageSales);
     $res = curl_get_with_cookies($url, $cookieStr, ["Accept: text/csv,*/*"], "https://saas-hk.jetinno.com/order");
     $looksCsv = ($res['ok'] && stripos((string)$res['ct'], 'text/csv') !== false);
@@ -49,21 +45,31 @@ for ($page=1; $page<=$maxPagesSales; $page++) {
         break;
     }
 
-    // Найдём колонку времени один раз по первой строке
+    // Ищем колонку времени по первой строке страницы
     $timeCol = null;
     if (isset($assoc[0]) && is_array($assoc[0])) {
-        $timeCol = find_col($assoc[0], ['time','create time','created','oluşma','sipariş zamanı','satın alma zamanı','satınalma zamanı','satın alma zamani','satinalma zamani','order time','更新时间','时间']);
+        $timeCol = find_col($assoc[0], [
+            'buy time',
+            'time',
+            'create time',
+            'created',
+            'oluşma',
+            'sipariş zamanı',
+            'satın alma zamanı',
+            'satınalma zamanı',
+            'satın alma zamani',
+            'satinalma zamani',
+            'order time',
+            '更新时间',
+            '时间'
+        ]);
     }
-    if ($timeCol === null) $canStopByDate = false;
 
+    // Если колонку времени не нашли — безопасный режим: только первая страница
     if ($timeCol === null) {
-        // В CSV не найдена колонка времени.
-        // Доверяем фильтру daterangeToday (YYYY-MM-DD - YYYY-MM-DD) и считаем только первую страницу,
-        // чтобы вернуть уведомления о продажах как раньше.
         $hdrKeys = isset($assoc[0]) && is_array($assoc[0]) ? implode(' | ', array_keys($assoc[0])) : '';
-        xhe_log('sales', "NO TIME COLUMN in sales CSV; fallback to daterange-only mode (page=1). headers={$hdrKeys}", 'WARNING');
-        $canStopByDate = false;
-        // собираем всё что пришло на странице 1
+        xhe_log('sales', "NO TIME COLUMN in sales CSV; fallback first-page-only. headers={$hdrKeys}", 'WARNING');
+
         foreach ($assoc as $r) {
             $allSalesRows[] = $r;
 
@@ -115,53 +121,44 @@ for ($page=1; $page<=$maxPagesSales; $page++) {
             @file_put_contents($tmp, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
             @rename($tmp, $topPath);
         }
-break;
+
+        xhe_log('sales', "CSV page={$page} fallback rows=" . count($assoc) . " total_today=" . count($allSalesRows), "INFO");
+        break;
     }
 
     $added = 0;
-    $hasToday = false;
-    $hasOlder = false;
+    $stopPaging = false;
 
     foreach ($assoc as $r) {
-        $timeVal = ($timeCol !== null) ? safe_s((string)($r[$timeCol] ?? '')) : '';
-        if ($timeVal === '' && $timeCol !== null) {
-            // no time in row - cannot decide
-            $canStopByDate = false;
+        $timeVal = safe_s((string)($r[$timeCol] ?? ''));
+        if ($timeVal === '') {
+            continue;
         }
 
-        if ($timeCol === null) {
-            // если не можем понять дату — берём всё и выходим после первой страницы
+        $ts = parse_ts($timeVal);
+        if ($ts <= 0) {
+            xhe_log('sales', "BAD TIME page={$page} value={$timeVal}", "DEBUG");
+            continue;
+        }
+
+        $d = date('Y-m-d', $ts);
+
+        if ($d === $todayStr) {
             $allSalesRows[] = $r;
             $added++;
             continue;
         }
 
-        $ts = parse_ts($timeVal);
-        $d  = $ts > 0 ? date('Y-m-d', $ts) : '';
-
-        if ($d === $todayStr) {
-            $allSalesRows[] = $r;
-            $added++;
-            $hasToday = true;
-        } elseif ($d !== '') {
-            $hasOlder = true;
-        }
+        // как только встретили НЕ сегодня — дальше стоп
+        $stopPaging = true;
+        break;
     }
 
-    xhe_log('sales', "CSV page={$page} rows=" . count($assoc) . " added_today={$added} total_today=" . count($allSalesRows), "INFO");
+    xhe_log('sales', "CSV page={$page} rows=" . count($assoc) . " added_today={$added} total_today=" . count($allSalesRows) . " stop=" . ($stopPaging ? 1 : 0), "INFO");
 
-    if (!$canStopByDate) {
-        // нет колонок времени — выходим после первой страницы
-        if ($page >= 1) break;
-    }
-
-    // логика остановки:
-    // - если на странице нет today => дальше смысла нет (при сортировке по времени DESC)
-    // - если есть older и есть today => дальше уже пойдут только older => стоп
-    if (!$hasToday) break;
-    if ($hasOlder) break;
-
-    // иначе продолжаем на следующую страницу (всё ещё today)
+    if ($added === 0) break;
+    if ($stopPaging) break;
+    if (count($assoc) < $perPageSales) break;
 }if ($salesSkip) {
         xhe_log('sales', "SKIP sales aggregation/notify", 'WARNING');
     } else {
